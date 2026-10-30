@@ -164,7 +164,5 @@ power-management-system/
 ├── power-alert/                # 告警服务
 ├── frontend/                   # Vue 3 控制台
 ├── verify-roles.mjs            # 角色数据边界验证脚本（node verify-roles.mjs，需服务已启动）
-├── verify-payment.mjs          # 缴费流程验证脚本（node verify-payment.mjs，同上）
-├── src/                        # 改造前单体代码，仅作对照
-└── backup-single-app/          # 单体版本备份
+└── verify-payment.mjs          # 缴费流程验证脚本（node verify-payment.mjs，同上）
 ```
