@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 日用电量 Mapper XML
+
+     数据范围写法统一：<if test="scopeCustomerId != null"> AND customer_id = #{scopeCustomerId} </if>
+     —— 客户角色一定带值，SQL 只会命中自己那一户；管理员传 null，条件整体不拼接。
+
+     首页曲线要"每次刷新都一样"，所以查询里没有任何随机数或 NOW()，
+     时间窗口以 MAX(usage_date) 为锚点而不是 CURDATE()：
+     今天的数据要等采集任务跑完才有，若按 CURDATE() 算会把空的一天画进曲线尾巴。 -->
+<mapper namespace="com.power.billing.mapper.DailyUsageMapper">
+
+    <sql id="Scope">
+        <if test="scopeCustomerId != null">
+            AND customer_id = #{scopeCustomerId}
+        </if>
+    </sql>
+
+    <!-- 按日聚合：多块表同一客户时先 SUM，再按日期分组 -->
+    <select id="selectDailyTrend" resultType="java.util.LinkedHashMap">
+        SELECT
+            d.usage_date                              AS usageDate,
+            ROUND(SUM(d.total_usage), 1)              AS totalUsage,
+            ROUND(SUM(d.peak_usage), 1)               AS peakUsage,
+            ROUND(SUM(d.high_usage), 1)               AS highUsage,
+            ROUND(SUM(d.flat_usage), 1)               AS flatUsage,
+            ROUND(SUM(d.valley_usage), 1)             AS valleyUsage
+        FROM electricity_daily_usage d
+        WHERE d.deleted = 0
+          <include refid="Scope"/>
+          AND d.usage_date &gt;= DATE_SUB(
+              (SELECT COALESCE(MAX(usage_date), CURDATE()) FROM electricity_daily_usage WHERE deleted = 0),
+              INTERVAL #{days} DAY)
+        GROUP BY d.usage_date
+        ORDER BY d.usage_date ASC
+    </select>
+
+    <!-- 分表明细：客户名下有多块表时，逐表展示 -->
+    <select id="selectMeterDailyTrend" resultType="java.util.LinkedHashMap">
+        SELECT
+            d.meter_id                                AS meterId,
+            d.usage_date                              AS usageDate,
+            ROUND(SUM(d.total_usage), 2)              AS totalUsage
+        FROM electricity_daily_usage d
+        WHERE d.deleted = 0
+          <include refid="Scope"/>
+          <if test="meterId != null">
+              AND d.meter_id = #{meterId}
+          </if>
+          AND d.usage_date &gt;= DATE_SUB(
+              (SELECT COALESCE(MAX(usage_date), CURDATE()) FROM electricity_daily_usage WHERE deleted = 0),
+              INTERVAL #{days} DAY)
+        GROUP BY d.meter_id, d.usage_date
+        ORDER BY d.meter_id ASC, d.usage_date ASC
+    </select>
+
+    <!-- 汇总：总用电 / 日均 / 最高日 / 同比上一个同长度区间 -->
+    <select id="selectCustomerSummary" resultType="java.util.LinkedHashMap">
+        SELECT
+            ROUND(SUM(d.total_usage), 1)                                        AS totalUsage,
+            ROUND(SUM(d.total_usage) / #{days}, 1)                              AS avgDaily,
+            ROUND(MAX(d.total_usage), 1)                                        AS maxDaily,
+            COUNT(DISTINCT d.usage_date)                                        AS dayCount,
+            MIN(d.usage_date)                                                   AS fromDate,
+            MAX(d.usage_date)                                                   AS toDate
+        FROM electricity_daily_usage d
+        WHERE d.deleted = 0
+          <include refid="Scope"/>
+          AND d.usage_date &gt;= DATE_SUB(
+              (SELECT COALESCE(MAX(usage_date), CURDATE()) FROM electricity_daily_usage WHERE deleted = 0),
+              INTERVAL #{days} DAY)
+    </select>
+
+    <!-- 尖峰平谷构成：用于"电费构成"环形图 -->
+    <select id="selectTouSplit" resultType="java.util.LinkedHashMap">
+        SELECT
+            ROUND(SUM(d.peak_usage), 1)    AS peakUsage,
+            ROUND(SUM(d.high_usage), 1)    AS highUsage,
+            ROUND(SUM(d.flat_usage), 1)    AS flatUsage,
+            ROUND(SUM(d.valley_usage), 1)  AS valleyUsage,
+            ROUND(SUM(d.total_usage), 1)   AS totalUsage
+        FROM electricity_daily_usage d
+        WHERE d.deleted = 0
+          <include refid="Scope"/>
+          AND d.usage_date &gt;= DATE_SUB(
+              (SELECT COALESCE(MAX(usage_date), CURDATE()) FROM electricity_daily_usage WHERE deleted = 0),
+              INTERVAL #{days} DAY)
+    </select>
+
+    <!-- 按月汇总：DATE_FORMAT 截断到月，用于月度趋势（真数据，不是按日均乘系数） -->
+    <select id="selectMonthlyTrend" resultType="java.util.LinkedHashMap">
+        SELECT
+            DATE_FORMAT(d.usage_date, '%Y-%m')        AS month,
+            ROUND(SUM(d.total_usage), 1)              AS totalUsage
+        FROM electricity_daily_usage d
+        WHERE d.deleted = 0
+          <include refid="Scope"/>
+          AND d.usage_date &gt;= DATE_SUB(
+              (SELECT COALESCE(MAX(usage_date), CURDATE()) FROM electricity_daily_usage WHERE deleted = 0),
+              INTERVAL #{months} MONTH)
+        GROUP BY DATE_FORMAT(d.usage_date, '%Y-%m')
+        ORDER BY month ASC
+    </select>
+
+    <select id="countByDate" resultType="int">
+        SELECT COUNT(*) FROM electricity_daily_usage WHERE usage_date = #{usageDate} AND deleted = 0
+    </select>
+</mapper>

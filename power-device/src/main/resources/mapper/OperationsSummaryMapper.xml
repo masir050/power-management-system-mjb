@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 运维汇总 Mapper XML
+
+     一条 SELECT 里用标量子查询取三类统计。
+     为什么不用三次独立查询：调用方在另一个服务里，每多一次就要多一趟 HTTP；
+     而这三张表都在 power_device 同一个库，聚合的代价只是一次全表扫描（且都是小表）。
+     现实中设备数一旦上规模，这里应该换成定时汇总表，但那属于后续优化，不在本次范围。 -->
+<mapper namespace="com.power.device.mapper.OperationsSummaryMapper">
+
+    <select id="selectOperationsSummary" resultType="java.util.LinkedHashMap">
+        SELECT
+            (SELECT COUNT(*) FROM power_equipment WHERE deleted = 0)                    AS totalEquipment,
+            (SELECT COUNT(*) FROM substation      WHERE deleted = 0)                    AS totalSubstations,
+            (SELECT COUNT(*) FROM substation      WHERE deleted = 0 AND run_status = '运行中') AS runningSubstations,
+            (SELECT COUNT(*) FROM smart_meter     WHERE deleted = 0)                    AS totalMeters,
+            (SELECT COUNT(*) FROM smart_meter     WHERE deleted = 0 AND meter_status = '正常') AS normalMeters
+    </select>
+</mapper>

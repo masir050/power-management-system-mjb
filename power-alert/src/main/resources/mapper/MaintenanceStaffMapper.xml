@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 检修人员 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合 -->
+<mapper namespace="com.power.alert.mapper.MaintenanceStaffMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, name, department, position, phone, work_status, create_time, update_time, deleted
+    </sql>
+
+    <!-- 分页查询工作人员：支持按姓名/部门/职位/工作状态动态过滤 -->
+    <select id="selectStaffPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            id, name, department, position, phone, work_status AS workStatus,
+            create_time AS createTime
+        FROM maintenance_staff
+        <where>
+            deleted = 0
+            <if test="name != null and name != ''">
+                AND name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="department != null and department != ''">
+                AND department = #{department}
+            </if>
+            <if test="position != null and position != ''">
+                AND position LIKE CONCAT('%', #{position}, '%')
+            </if>
+            <if test="workStatus != null and workStatus != ''">
+                AND work_status = #{workStatus}
+            </if>
+        </where>
+        ORDER BY create_time ASC
+    </select>
+
+    <!-- 查询工作人员及检修统计：LEFT JOIN + GROUP BY 聚合 -->
+    <select id="selectStaffWithRecordCount" resultType="java.util.LinkedHashMap">
+        SELECT
+            s.id, s.name, s.department, s.position, s.phone, s.work_status AS workStatus,
+            COUNT(r.id) AS recordCount,
+            ROUND(AVG(r.repair_hours), 2) AS avgRepairHours
+        FROM maintenance_staff s
+        LEFT JOIN maintenance_record r ON s.id = r.staff_id AND r.deleted = 0
+        <where>
+            s.deleted = 0
+            <if test="department != null and department != ''">
+                AND s.department = #{department}
+            </if>
+            <if test="workStatus != null and workStatus != ''">
+                AND s.work_status = #{workStatus}
+            </if>
+        </where>
+        GROUP BY s.id, s.name, s.department, s.position, s.phone, s.work_status
+        ORDER BY recordCount ASC
+    </select>
+
+    <!-- 统计工作人员状态：CASE WHEN 条件聚合 + DISTINCT 部门数 -->
+    <select id="selectStaffStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalStaff,
+            SUM(CASE WHEN work_status = '在岗' THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN work_status = '休假' THEN 1 ELSE 0 END) AS onLeave,
+            SUM(CASE WHEN work_status = '离职' THEN 1 ELSE 0 END) AS resigned,
+            COUNT(DISTINCT department) AS departmentCount
+        FROM maintenance_staff
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按部门分组统计：GROUP BY + CASE WHEN 条件聚合 -->
+    <select id="selectStaffGroupByDepartment" resultType="java.util.LinkedHashMap">
+        SELECT
+            department,
+            COUNT(*) AS count,
+            SUM(CASE WHEN work_status = '在岗' THEN 1 ELSE 0 END) AS activeCount
+        FROM maintenance_staff
+        WHERE deleted = 0
+        GROUP BY department
+        ORDER BY count ASC
+    </select>
+
+    <!-- 动态更新工作人员：<set> 标签仅更新非空字段 -->
+    <update id="updateStaffSelective">
+        UPDATE maintenance_staff
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="department != null">department = #{department},</if>
+            <if test="position != null">position = #{position},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="workStatus != null">work_status = #{workStatus},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO maintenance_staff (name, department, position, phone, work_status, create_time, update_time)
+        VALUES (#{name}, #{department}, #{position}, #{phone}, #{workStatus}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="MaintenanceStaff">
+        SELECT * FROM maintenance_staff WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="MaintenanceStaff">
+        SELECT * FROM maintenance_staff WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="MaintenanceStaff">
+        SELECT * FROM maintenance_staff
+        <where>
+            deleted = 0
+            <if test="name != null and name != ''">
+                AND name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="department != null and department != ''">
+                AND department = #{department}
+            </if>
+            <if test="position != null and position != ''">
+                AND position LIKE CONCAT('%', #{position}, '%')
+            </if>
+            <if test="workStatus != null and workStatus != ''">
+                AND work_status = #{workStatus}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM maintenance_staff
+        <where>
+            deleted = 0
+            <if test="name != null and name != ''">
+                AND name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="department != null and department != ''">
+                AND department = #{department}
+            </if>
+            <if test="position != null and position != ''">
+                AND position LIKE CONCAT('%', #{position}, '%')
+            </if>
+            <if test="workStatus != null and workStatus != ''">
+                AND work_status = #{workStatus}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM maintenance_staff WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE maintenance_staff
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="department != null">department = #{department},</if>
+            <if test="position != null">position = #{position},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="workStatus != null">work_status = #{workStatus},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE maintenance_staff SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

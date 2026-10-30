@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 电力设备 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合
+     - FIELD() 自定义排序 -->
+<mapper namespace="com.power.device.mapper.PowerEquipmentMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, equipment_name, equipment_type, rated_params, install_location, manufacture_date,
+        impact_scope, hazard_level, install_batch, quantity, commission_batch,
+        substation_id, create_time, update_time, deleted
+    </sql>
+
+    <!-- 设备视图结果映射 -->
+    <resultMap id="EquipmentVOResultMap" type="com.power.device.pojo.PowerEquipmentVO">
+        <id column="id" property="id"/>
+        <result column="equipment_name" property="equipmentName"/>
+        <result column="equipment_type" property="equipmentType"/>
+        <result column="rated_params" property="ratedParams"/>
+        <result column="install_location" property="installLocation"/>
+        <result column="manufacture_date" property="manufactureDate"/>
+        <result column="impact_scope" property="impactScope"/>
+        <result column="hazard_level" property="hazardLevel"/>
+        <result column="install_batch" property="installBatch"/>
+        <result column="quantity" property="quantity"/>
+        <result column="commission_batch" property="commissionBatch"/>
+        <result column="substation_id" property="substationId"/>
+    </resultMap>
+
+    <!-- 查询设备详情：LEFT JOIN 关联变电站 -->
+    <select id="selectEquipmentWithSubstation" resultType="java.util.LinkedHashMap">
+        SELECT
+            e.id, e.equipment_name AS equipmentName, e.equipment_type AS equipmentType,
+            e.rated_params AS ratedParams, e.install_location AS installLocation,
+            e.manufacture_date AS manufactureDate, e.impact_scope AS impactScope,
+            e.hazard_level AS hazardLevel, e.install_batch AS installBatch,
+            e.quantity, e.commission_batch AS commissionBatch,
+            e.substation_id AS substationId,
+            s.name AS substationName, s.voltage_level AS substationVoltage
+        FROM power_equipment e
+        LEFT JOIN substation s ON e.substation_id = s.id
+        WHERE e.id = #{id} AND e.deleted = 0
+    </select>
+
+    <!-- 分页查询设备：支持按名称/类型/危险等级/安装批次/变电站动态过滤 -->
+    <select id="selectEquipmentPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            e.id, e.equipment_name AS equipmentName, e.equipment_type AS equipmentType,
+            e.rated_params AS ratedParams, e.install_location AS installLocation,
+            e.manufacture_date AS manufactureDate, e.impact_scope AS impactScope,
+            e.hazard_level AS hazardLevel, e.install_batch AS installBatch,
+            e.quantity, e.commission_batch AS commissionBatch,
+            e.substation_id AS substationId,
+            s.name AS substationName
+        FROM power_equipment e
+        LEFT JOIN substation s ON e.substation_id = s.id
+        <where>
+            e.deleted = 0
+            <if test="equipmentName != null and equipmentName != ''">
+                AND e.equipment_name LIKE CONCAT('%', #{equipmentName}, '%')
+            </if>
+            <if test="equipmentType != null and equipmentType != ''">
+                AND e.equipment_type = #{equipmentType}
+            </if>
+            <if test="hazardLevel != null and hazardLevel != ''">
+                AND e.hazard_level = #{hazardLevel}
+            </if>
+            <if test="substationId != null">
+                AND e.substation_id = #{substationId}
+            </if>
+            <if test="installBatch != null and installBatch != ''">
+                AND e.install_batch = #{installBatch}
+            </if>
+        </where>
+        ORDER BY e.create_time ASC
+    </select>
+
+    <!-- 统计设备分类及危险等级：CASE WHEN 条件聚合 + SUM -->
+    <select id="selectEquipmentStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalEquipment,
+            SUM(quantity) AS totalQuantity,
+            SUM(CASE WHEN equipment_type = '变压器' THEN quantity ELSE 0 END) AS transformerCount,
+            SUM(CASE WHEN equipment_type = '断路器' THEN quantity ELSE 0 END) AS breakerCount,
+            SUM(CASE WHEN equipment_type = '隔离开关' THEN quantity ELSE 0 END) AS disconnectorCount,
+            SUM(CASE WHEN hazard_level = '一级' THEN 1 ELSE 0 END) AS levelOne,
+            SUM(CASE WHEN hazard_level = '二级' THEN 1 ELSE 0 END) AS levelTwo,
+            SUM(CASE WHEN hazard_level = '三级' THEN 1 ELSE 0 END) AS levelThree
+        FROM power_equipment
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按危险等级分组统计：GROUP BY + FIELD() 自定义排序 -->
+    <select id="selectEquipmentGroupByHazard" resultType="java.util.LinkedHashMap">
+        SELECT
+            hazard_level AS hazardLevel,
+            COUNT(*) AS count,
+            SUM(quantity) AS totalQuantity
+        FROM power_equipment
+        WHERE deleted = 0
+        GROUP BY hazard_level
+        ORDER BY FIELD(hazard_level, '一级', '二级', '三级')
+    </select>
+
+    <!-- 动态更新设备：<set> 标签仅更新非空字段 -->
+    <update id="updateEquipmentSelective">
+        UPDATE power_equipment
+        <set>
+            <if test="equipmentName != null">equipment_name = #{equipmentName},</if>
+            <if test="equipmentType != null">equipment_type = #{equipmentType},</if>
+            <if test="ratedParams != null">rated_params = #{ratedParams},</if>
+            <if test="installLocation != null">install_location = #{installLocation},</if>
+            <if test="manufactureDate != null">manufacture_date = #{manufactureDate},</if>
+            <if test="impactScope != null">impact_scope = #{impactScope},</if>
+            <if test="hazardLevel != null">hazard_level = #{hazardLevel},</if>
+            <if test="installBatch != null">install_batch = #{installBatch},</if>
+            <if test="quantity != null">quantity = #{quantity},</if>
+            <if test="commissionBatch != null">commission_batch = #{commissionBatch},</if>
+            <if test="substationId != null">substation_id = #{substationId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO power_equipment (equipment_name, equipment_type, rated_params, install_location, manufacture_date,
+                                     impact_scope, hazard_level, install_batch, quantity, commission_batch,
+                                     substation_id, create_time, update_time)
+        VALUES (#{equipmentName}, #{equipmentType}, #{ratedParams}, #{installLocation}, #{manufactureDate},
+                #{impactScope}, #{hazardLevel}, #{installBatch}, #{quantity}, #{commissionBatch},
+                #{substationId}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="PowerEquipment">
+        SELECT * FROM power_equipment WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="PowerEquipment">
+        SELECT * FROM power_equipment WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="PowerEquipment">
+        SELECT * FROM power_equipment
+        <where>
+            deleted = 0
+            <if test="equipmentName != null and equipmentName != ''">
+                AND equipment_name LIKE CONCAT('%', #{equipmentName}, '%')
+            </if>
+            <if test="equipmentType != null and equipmentType != ''">
+                AND equipment_type = #{equipmentType}
+            </if>
+            <if test="hazardLevel != null and hazardLevel != ''">
+                AND hazard_level = #{hazardLevel}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM power_equipment
+        <where>
+            deleted = 0
+            <if test="equipmentName != null and equipmentName != ''">
+                AND equipment_name LIKE CONCAT('%', #{equipmentName}, '%')
+            </if>
+            <if test="equipmentType != null and equipmentType != ''">
+                AND equipment_type = #{equipmentType}
+            </if>
+            <if test="hazardLevel != null and hazardLevel != ''">
+                AND hazard_level = #{hazardLevel}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM power_equipment WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE power_equipment
+        <set>
+            <if test="equipmentName != null">equipment_name = #{equipmentName},</if>
+            <if test="equipmentType != null">equipment_type = #{equipmentType},</if>
+            <if test="ratedParams != null">rated_params = #{ratedParams},</if>
+            <if test="installLocation != null">install_location = #{installLocation},</if>
+            <if test="manufactureDate != null">manufacture_date = #{manufactureDate},</if>
+            <if test="impactScope != null">impact_scope = #{impactScope},</if>
+            <if test="hazardLevel != null">hazard_level = #{hazardLevel},</if>
+            <if test="installBatch != null">install_batch = #{installBatch},</if>
+            <if test="quantity != null">quantity = #{quantity},</if>
+            <if test="commissionBatch != null">commission_batch = #{commissionBatch},</if>
+            <if test="substationId != null">substation_id = #{substationId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE power_equipment SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

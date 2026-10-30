@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 本地消息表（事务性发件箱）XML
+     - 抢占式读：FOR UPDATE SKIP LOCKED
+     - 状态机：PENDING -> SENT / FAILED
+     - 退避：next_retry_time 由调用方按指数退避算好传入 -->
+<mapper namespace="com.power.alert.mapper.LocalMessageMapper">
+
+    <sql id="BaseColumns">
+        id, message_id, exchange_name, routing_key, payload, status,
+        retry_count, last_error, next_retry_time, sent_time,
+        create_time, update_time, deleted
+    </sql>
+
+    <!--
+      抢占一批待投递消息（多实例安全）
+
+      FOR UPDATE SKIP LOCKED 是这里的关键：
+        · 不加锁时，两个实例同时 SELECT 会拿到同一批消息，导致重复投递（虽然消费端有幂等，
+          但白白浪费一次投递，且放大 MQ 压力）；
+        · 加 FOR UPDATE 不加 SKIP LOCKED 时，实例 B 会阻塞等实例 A 释放行锁，补偿任务退化成串行；
+        · SKIP LOCKED 让实例 B 直接跳过被 A 锁住的行去拿下一批，各实例天然分片、互不阻塞。
+
+      注意：SKIP LOCKED 需要 MySQL 8.0+；5.7 会报语法错误。
+
+      另外 "status = 'PENDING' AND next_retry_time <= now()" 必须加 ORDER BY id：
+      索引用 (status, next_retry_time, id)，排序与索引顺序一致，避免 filesort；
+      同时保证先进队列的消息先被投递，符合 FIFO 直觉。
+    -->
+    <select id="selectPending" resultType="com.power.alert.pojo.LocalMessage">
+        SELECT <include refid="BaseColumns"/>
+        FROM local_message
+        WHERE status = 'PENDING'
+          AND next_retry_time &lt;= #{now}
+          AND deleted = 0
+        ORDER BY id
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <!-- 标记投递成功：只有仍处于 PENDING 的行才更新，避免重复回调把已成功的记录改回去 -->
+    <update id="markSent">
+        UPDATE local_message
+        SET status = 'SENT',
+            sent_time = #{sentTime},
+            update_time = NOW(),
+            last_error = NULL
+        WHERE message_id = #{messageId}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 标记投递失败并退避重试 -->
+    <update id="markFailed">
+        UPDATE local_message
+        SET retry_count = #{retryCount},
+            last_error = #{lastError},
+            next_retry_time = #{nextRetryTime},
+            update_time = NOW()
+        WHERE message_id = #{messageId}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 超过最大重试次数：转 FAILED，留待人工排查（不再自动重试） -->
+    <update id="markDead">
+        UPDATE local_message
+        SET status = 'FAILED',
+            last_error = #{lastError},
+            update_time = NOW()
+        WHERE message_id = #{messageId}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 幂等校验：按 message_id 查状态 -->
+    <select id="selectByMessageId" resultType="com.power.alert.pojo.LocalMessage">
+        SELECT <include refid="BaseColumns"/>
+        FROM local_message
+        WHERE message_id = #{messageId}
+        LIMIT 1
+    </select>
+
+    <!-- ================= 以下为 BaseMapper 通用方法实现 ================= -->
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO local_message (message_id, exchange_name, routing_key, payload, status,
+                                   retry_count, last_error, next_retry_time, sent_time,
+                                   create_time, update_time)
+        VALUES (#{messageId}, #{exchangeName}, #{routingKey}, #{payload}, #{status},
+                #{retryCount}, #{lastError}, #{nextRetryTime}, #{sentTime},
+                NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="com.power.alert.pojo.LocalMessage">
+        SELECT <include refid="BaseColumns"/> FROM local_message WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="com.power.alert.pojo.LocalMessage">
+        SELECT <include refid="BaseColumns"/> FROM local_message
+        WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM local_message WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE local_message
+        <set>
+            <if test="status != null">status = #{status},</if>
+            <if test="retryCount != null">retry_count = #{retryCount},</if>
+            <if test="lastError != null">last_error = #{lastError},</if>
+            <if test="nextRetryTime != null">next_retry_time = #{nextRetryTime},</if>
+            <if test="sentTime != null">sent_time = #{sentTime},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE local_message SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

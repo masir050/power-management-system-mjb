@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 系统用户 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - CASE WHEN 条件聚合
+     - LIKE CONCAT 模糊查询
+     - LIMIT 限制结果条数 -->
+<mapper namespace="com.power.auth.mapper.SysUserMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, username, password, nickname, email, phone, status,
+        role, customer_id, staff_id,
+        create_time, update_time, deleted
+    </sql>
+
+    <!-- 根据用户名查询用户：LIMIT 限制单条 -->
+    <select id="selectUserByUsername" resultType="com.power.auth.pojo.SysUser">
+        SELECT <include refid="BaseColumns"/>
+        FROM sys_user
+        WHERE username = #{username} AND deleted = 0
+        LIMIT 1
+    </select>
+
+    <!-- 分页查询用户：支持按用户名/昵称/状态/邮箱动态过滤 -->
+    <select id="selectUserPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            id, username, nickname, email, phone, status,
+            create_time AS createTime
+        FROM sys_user
+        <where>
+            deleted = 0
+            <if test="username != null and username != ''">
+                AND username LIKE CONCAT('%', #{username}, '%')
+            </if>
+            <if test="nickname != null and nickname != ''">
+                AND nickname LIKE CONCAT('%', #{nickname}, '%')
+            </if>
+            <if test="status != null">
+                AND status = #{status}
+            </if>
+            <if test="email != null and email != ''">
+                AND email = #{email}
+            </if>
+        </where>
+        ORDER BY create_time ASC
+    </select>
+
+    <!-- 统计用户状态：CASE WHEN + 字符串函数 -->
+    <select id="selectUserStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalUsers,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS disabled,
+            COUNT(DISTINCT LEFT(username, LOCATE('_', CONCAT(username, '_')) - 1)) AS usernamePrefixCount
+        FROM sys_user
+        WHERE deleted = 0
+    </select>
+
+    <!-- 动态更新用户：<set> 标签仅更新非空字段 -->
+    <update id="updateUserSelective">
+        UPDATE sys_user
+        <set>
+            <if test="nickname != null">nickname = #{nickname},</if>
+            <if test="email != null">email = #{email},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="password != null">password = #{password},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_user (username, password, nickname, email, phone, status, create_time, update_time)
+        VALUES (#{username}, #{password}, #{nickname}, #{email}, #{phone}, #{status}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="SysUser">
+        SELECT * FROM sys_user WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="SysUser">
+        SELECT * FROM sys_user WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM sys_user WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE sys_user
+        <set>
+            <if test="username != null">username = #{username},</if>
+            <if test="password != null">password = #{password},</if>
+            <if test="nickname != null">nickname = #{nickname},</if>
+            <if test="email != null">email = #{email},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="status != null">status = #{status},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE sys_user SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

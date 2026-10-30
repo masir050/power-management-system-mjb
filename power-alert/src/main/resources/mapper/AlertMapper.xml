@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 告警 Mapper XML
+     告警表在本库（power_alert）内自成一体，不 JOIN 设备表——
+     设备在 power_device 库，跨库 JOIN 在微服务下不可行，
+     设备名以快照形式冗余在 alert.equipment_name 上。 -->
+<mapper namespace="com.power.alert.mapper.AlertMapper">
+
+    <sql id="BaseColumns">
+        id, equipment_id, equipment_name, fault_type, alert_description, alert_level,
+        alert_status, occurrence_time, acknowledge_time, resolve_time, handler_id,
+        handle_result, create_time, update_time, deleted
+    </sql>
+
+    <!-- 告警列表的公共过滤条件：列表查询与计数必须用同一段 SQL，否则分页总数对不上 -->
+    <sql id="PageWhere">
+        <where>
+            deleted = 0
+            <if test="alertLevel != null and alertLevel != ''">
+                AND alert_level = #{alertLevel}
+            </if>
+            <if test="alertStatus != null and alertStatus != ''">
+                AND alert_status = #{alertStatus}
+            </if>
+            <if test="faultType != null and faultType != ''">
+                AND fault_type LIKE CONCAT('%', #{faultType}, '%')
+            </if>
+            <if test="equipmentId != null">
+                AND equipment_id = #{equipmentId}
+            </if>
+            <if test="startTime != null">
+                AND occurrence_time &gt;= #{startTime}
+            </if>
+            <if test="endTime != null">
+                AND occurrence_time &lt;= #{endTime}
+            </if>
+        </where>
+    </sql>
+
+    <!-- 告警分页列表：排序字段已由调用方白名单校验（禁止直接透传前端值） -->
+    <select id="selectAlertPage" resultType="com.power.alert.pojo.AlertRecord">
+        SELECT <include refid="BaseColumns"/>
+        FROM alert
+        <include refid="PageWhere"/>
+        ORDER BY ${sortField} ${sortOrder}
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countAlertPage" resultType="long">
+        SELECT COUNT(*) FROM alert
+        <include refid="PageWhere"/>
+    </select>
+
+    <!-- 告警统计：CASE WHEN 条件聚合 + TIMESTAMPDIFF 算平均处理时长 -->
+    <select id="selectAlertStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalAlerts,
+            SUM(CASE WHEN alert_status = 'PENDING'      THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN alert_status = 'ACKNOWLEDGED' THEN 1 ELSE 0 END) AS acknowledged,
+            SUM(CASE WHEN alert_status = 'RESOLVED'     THEN 1 ELSE 0 END) AS resolved,
+            SUM(CASE WHEN alert_level = '紧急' THEN 1 ELSE 0 END) AS urgent,
+            SUM(CASE WHEN alert_level = '高'   THEN 1 ELSE 0 END) AS high,
+            SUM(CASE WHEN alert_level = '中'   THEN 1 ELSE 0 END) AS medium,
+            SUM(CASE WHEN alert_level = '低'   THEN 1 ELSE 0 END) AS low,
+            ROUND(AVG(CASE WHEN resolve_time IS NOT NULL
+                           THEN TIMESTAMPDIFF(MINUTE, occurrence_time, resolve_time) END), 1) AS avgResolveMinutes
+        FROM alert
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按故障类型分组 -->
+    <select id="selectAlertGroupByFaultType" resultType="java.util.LinkedHashMap">
+        SELECT
+            fault_type AS faultType,
+            COUNT(*) AS count,
+            SUM(CASE WHEN alert_status = 'RESOLVED' THEN 1 ELSE 0 END) AS resolvedCount
+        FROM alert
+        WHERE deleted = 0
+        GROUP BY fault_type
+        ORDER BY count DESC
+    </select>
+
+    <!-- 最近 24 小时告警趋势：按小时分桶。
+         用 DATE_FORMAT 生成小时标签，前端直接当 x 轴用。
+         注意：没有告警的小时不会出现在结果里，前端需自行补零。 -->
+    <select id="selectHourlyTrend" resultType="java.util.LinkedHashMap">
+        SELECT
+            DATE_FORMAT(occurrence_time, '%Y-%m-%d %H:00') AS hourBucket,
+            COUNT(*) AS count
+        FROM alert
+        WHERE deleted = 0
+          AND occurrence_time &gt;= #{startTime}
+        GROUP BY hourBucket
+        ORDER BY hourBucket ASC
+    </select>
+
+    <!-- 近期告警：按触发时间倒序，只取前 N 条 -->
+    <select id="selectRecentAlerts" resultType="java.util.LinkedHashMap">
+        SELECT
+            id, equipment_id AS equipmentId, equipment_name AS equipmentName,
+            fault_type AS faultType, alert_description AS alertDescription,
+            alert_level AS alertLevel, alert_status AS alertStatus,
+            occurrence_time AS occurrenceTime
+        FROM alert
+        WHERE deleted = 0
+        ORDER BY occurrence_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      状态流转：带前置状态校验的乐观并发控制
+
+      为什么 WHERE 里要带 alert_status = #{fromStatus}：
+        两个运维人员同时点"处理完成"，若无前置状态校验，两次 UPDATE 都会成功，
+        第二次会把第一次写的处理人和结果覆盖掉。带上前置状态后，第二次的
+        WHERE 匹配不到行（状态已变），返回 0，业务层可据此提示"已被他人处理"。
+      这是最轻量的乐观锁，不需要额外加 lock_version 列。
+    -->
+    <update id="updateStatus">
+        UPDATE alert
+        <set>
+            alert_status = #{toStatus},
+            <if test="handlerId != null">handler_id = #{handlerId},</if>
+            <if test="handleResult != null">handle_result = #{handleResult},</if>
+            <if test="occurTime != null">acknowledge_time = #{occurTime},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id}
+          AND alert_status = #{fromStatus}
+          AND deleted = 0
+    </update>
+
+    <!-- ================= 以下为 BaseMapper 通用方法实现 ================= -->
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO alert (equipment_id, equipment_name, fault_type, alert_description,
+                           alert_level, alert_status, occurrence_time, acknowledge_time,
+                           resolve_time, handler_id, handle_result, create_time, update_time)
+        VALUES (#{equipmentId}, #{equipmentName}, #{faultType}, #{alertDescription},
+                #{alertLevel}, #{alertStatus}, #{occurrenceTime}, #{acknowledgeTime},
+                #{resolveTime}, #{handlerId}, #{handleResult}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="com.power.alert.pojo.AlertRecord">
+        SELECT <include refid="BaseColumns"/> FROM alert WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="com.power.alert.pojo.AlertRecord">
+        SELECT <include refid="BaseColumns"/> FROM alert
+        WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM alert WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE alert
+        <set>
+            <if test="equipmentId != null">equipment_id = #{equipmentId},</if>
+            <if test="equipmentName != null">equipment_name = #{equipmentName},</if>
+            <if test="faultType != null">fault_type = #{faultType},</if>
+            <if test="alertDescription != null">alert_description = #{alertDescription},</if>
+            <if test="alertLevel != null">alert_level = #{alertLevel},</if>
+            <if test="alertStatus != null">alert_status = #{alertStatus},</if>
+            <if test="occurrenceTime != null">occurrence_time = #{occurrenceTime},</if>
+            <if test="acknowledgeTime != null">acknowledge_time = #{acknowledgeTime},</if>
+            <if test="resolveTime != null">resolve_time = #{resolveTime},</if>
+            <if test="handlerId != null">handler_id = #{handlerId},</if>
+            <if test="handleResult != null">handle_result = #{handleResult},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE alert SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

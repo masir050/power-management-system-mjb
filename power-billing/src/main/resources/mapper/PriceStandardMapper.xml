@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 电价标准 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - GROUP BY 聚合统计
+     - 子查询取最大生效日期
+     - 聚合函数 AVG/MAX/MIN -->
+<mapper namespace="com.power.billing.mapper.PriceStandardMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, electricity_category, base_price, peak_price, valley_price,
+        effective_date, implementation_plan, preferential_policy,
+        pricing_method, create_time, update_time, deleted
+    </sql>
+
+    <!-- 分页查询电价标准：支持按类别/定价方式/生效日期动态过滤 -->
+    <select id="selectPricePage" resultType="java.util.LinkedHashMap">
+        SELECT
+            id, electricity_category AS electricityCategory,
+            base_price AS basePrice, peak_price AS peakPrice, valley_price AS valleyPrice,
+            effective_date AS effectiveDate, implementation_plan AS implementationPlan,
+            preferential_policy AS preferentialPolicy, pricing_method AS pricingMethod,
+            create_time AS createTime
+        FROM price_standard
+        <where>
+            deleted = 0
+            <if test="electricityCategory != null and electricity_category != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="pricingMethod != null and pricingMethod != ''">
+                AND pricing_method = #{pricingMethod}
+            </if>
+            <if test="effectiveDate != null">
+                AND effective_date &lt;= #{effectiveDate}
+            </if>
+        </where>
+        ORDER BY effective_date ASC
+    </select>
+
+    <!-- 查询各用电类别最新生效电价：子查询获取最大生效日期 -->
+    <select id="selectEffectivePrices" resultType="java.util.LinkedHashMap">
+        SELECT
+            p1.id, p1.electricity_category AS electricityCategory,
+            p1.base_price AS basePrice, p1.peak_price AS peakPrice,
+            p1.valley_price AS valleyPrice, p1.effective_date AS effectiveDate,
+            p1.implementation_plan AS implementationPlan,
+            p1.preferential_policy AS preferentialPolicy,
+            p1.pricing_method AS pricingMethod
+        FROM price_standard p1
+        INNER JOIN (
+            SELECT electricity_category, MAX(effective_date) AS maxDate
+            FROM price_standard
+            WHERE deleted = 0 AND effective_date &lt;= #{queryDate}
+            GROUP BY electricity_category
+        ) p2 ON p1.electricity_category = p2.electricity_category
+            AND p1.effective_date = p2.maxDate
+        WHERE p1.deleted = 0
+        ORDER BY p1.electricity_category
+    </select>
+
+    <!-- 按类别和定价方式统计电价：GROUP BY + 聚合函数 AVG/MAX/MIN -->
+    <select id="selectPriceStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            electricity_category AS electricityCategory,
+            COUNT(*) AS versionCount,
+            ROUND(AVG(base_price), 4) AS avgBasePrice,
+            ROUND(MAX(base_price), 4) AS maxBasePrice,
+            ROUND(MIN(base_price), 4) AS minBasePrice,
+            pricing_method AS pricingMethod
+        FROM price_standard
+        WHERE deleted = 0
+        GROUP BY electricity_category, pricing_method
+        ORDER BY electricity_category
+    </select>
+
+    <!-- 动态更新电价标准：<set> 标签仅更新非空字段 -->
+    <update id="updatePriceSelective">
+        UPDATE price_standard
+        <set>
+            <if test="electricityCategory != null">electricity_category = #{electricityCategory},</if>
+            <if test="basePrice != null">base_price = #{basePrice},</if>
+            <if test="peakPrice != null">peak_price = #{peakPrice},</if>
+            <if test="valleyPrice != null">valley_price = #{valleyPrice},</if>
+            <if test="effectiveDate != null">effective_date = #{effectiveDate},</if>
+            <if test="implementationPlan != null">implementation_plan = #{implementationPlan},</if>
+            <if test="preferentialPolicy != null">preferential_policy = #{preferentialPolicy},</if>
+            <if test="pricingMethod != null">pricing_method = #{pricingMethod},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO price_standard (electricity_category, base_price, peak_price, valley_price, effective_date,
+                                    implementation_plan, preferential_policy, pricing_method, create_time, update_time)
+        VALUES (#{electricityCategory}, #{basePrice}, #{peakPrice}, #{valleyPrice}, #{effectiveDate},
+                #{implementationPlan}, #{preferentialPolicy}, #{pricingMethod}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="PriceStandard">
+        SELECT * FROM price_standard WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="PriceStandard">
+        SELECT * FROM price_standard WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="PriceStandard">
+        SELECT * FROM price_standard
+        <where>
+            deleted = 0
+            <if test="electricityCategory != null and electricityCategory != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="effectiveDate != null">
+                AND effective_date &lt;= #{effectiveDate}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM price_standard
+        <where>
+            deleted = 0
+            <if test="electricityCategory != null and electricityCategory != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="effectiveDate != null">
+                AND effective_date &lt;= #{effectiveDate}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM price_standard WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE price_standard
+        <set>
+            <if test="electricityCategory != null">electricity_category = #{electricityCategory},</if>
+            <if test="basePrice != null">base_price = #{basePrice},</if>
+            <if test="peakPrice != null">peak_price = #{peakPrice},</if>
+            <if test="valleyPrice != null">valley_price = #{valleyPrice},</if>
+            <if test="effectiveDate != null">effective_date = #{effectiveDate},</if>
+            <if test="implementationPlan != null">implementation_plan = #{implementationPlan},</if>
+            <if test="preferentialPolicy != null">preferential_policy = #{preferentialPolicy},</if>
+            <if test="pricingMethod != null">pricing_method = #{pricingMethod},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE price_standard SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

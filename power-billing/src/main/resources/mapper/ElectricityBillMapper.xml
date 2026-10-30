@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 电费账单 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合
+     - 子查询 + 区间分组 -->
+<mapper namespace="com.power.billing.mapper.ElectricityBillMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, billing_year, total_consumption, arrears_amount, payment_status,
+        generate_time, reminder_count, payment_deadline, current_reading,
+        previous_reading, meter_reading_time, meter_id, customer_id,
+        create_time, update_time, deleted
+    </sql>
+
+    <!--
+      数据范围片段：客户只看自己的账单，其他人看全部。
+      参数 scopeCustomerId 由 Controller 从当前登录身份里取（见 BillScope），
+      不从前端传——传了也能被覆盖，杜绝"改个参数看别人的账单"。
+    -->
+    <sql id="CustomerScope">
+        <if test="scopeCustomerId != null">
+            AND b.customer_id = #{scopeCustomerId}
+        </if>
+    </sql>
+
+    <!-- 电费账单视图结果映射 -->
+    <resultMap id="BillVOResultMap" type="com.power.billing.pojo.ElectricityBillVO">
+        <id column="id" property="id"/>
+        <result column="billing_year" property="billingYear"/>
+        <result column="total_consumption" property="totalConsumption"/>
+        <result column="arrears_amount" property="arrearsAmount"/>
+        <result column="payment_status" property="paymentStatus"/>
+        <result column="generate_time" property="generateTime"/>
+        <result column="reminder_count" property="reminderCount"/>
+        <result column="payment_deadline" property="paymentDeadline"/>
+        <result column="current_reading" property="currentReading"/>
+        <result column="previous_reading" property="previousReading"/>
+        <result column="meter_reading_time" property="meterReadingTime"/>
+        <result column="meter_id" property="meterId"/>
+    </resultMap>
+
+    <!-- 查询账单详情：智能电表在 power_device 库，本库无法 JOIN。
+         拆分前这里写的是 LEFT JOIN smart_meter，拆库后必然报表不存在——
+         电表信息改由 deviceClient 单独补齐（见 ElectricityBillService）。 -->
+    <select id="selectBillWithDetails" resultType="java.util.LinkedHashMap">
+        SELECT
+            b.id, b.billing_year AS billingYear, b.total_consumption AS totalConsumption,
+            b.bill_amount AS billAmount, b.paid_amount AS paidAmount,
+            b.paid_time AS paidTime, b.payment_method AS paymentMethod,
+            b.arrears_amount AS arrearsAmount, b.payment_status AS paymentStatus,
+            b.generate_time AS generateTime, b.reminder_count AS reminderCount,
+            b.payment_deadline AS paymentDeadline, b.current_reading AS currentReading,
+            b.previous_reading AS previousReading, b.meter_reading_time AS meterReadingTime,
+            b.meter_id AS meterId, b.customer_id AS customerId,
+            c.customer_name AS customerName, c.electricity_category AS electricityCategory,
+            c.address, c.contact
+        FROM electricity_bill b
+        LEFT JOIN electricity_customer c ON b.customer_id = c.id AND c.deleted = 0
+        WHERE b.id = #{id} AND b.deleted = 0
+          <include refid="CustomerScope"/>
+    </select>
+
+    <!-- 分页查询账单：支持按年份/支付状态/客户/用电量范围动态过滤 -->
+    <select id="selectBillPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            b.id, b.billing_year AS billingYear, b.total_consumption AS totalConsumption,
+            b.bill_amount AS billAmount, b.paid_amount AS paidAmount,
+            b.paid_time AS paidTime, b.payment_method AS paymentMethod,
+            b.arrears_amount AS arrearsAmount, b.payment_status AS paymentStatus,
+            b.generate_time AS generateTime, b.reminder_count AS reminderCount,
+            b.payment_deadline AS paymentDeadline, b.current_reading AS currentReading,
+            b.previous_reading AS previousReading, b.meter_reading_time AS meterReadingTime,
+            b.meter_id AS meterId, b.customer_id AS customerId,
+            c.customer_name AS customerName, c.electricity_category AS electricityCategory
+        FROM electricity_bill b
+        LEFT JOIN electricity_customer c ON b.customer_id = c.id AND c.deleted = 0
+        <where>
+            b.deleted = 0
+            <include refid="CustomerScope"/>
+            <if test="billingYear != null">
+                AND b.billing_year = #{billingYear}
+            </if>
+            <if test="paymentStatus != null and paymentStatus != ''">
+                AND b.payment_status = #{paymentStatus}
+            </if>
+            <if test="meterId != null">
+                AND b.meter_id = #{meterId}
+            </if>
+            <if test="customerName != null and customerName != ''">
+                AND c.customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="minConsumption != null">
+                AND b.total_consumption &gt;= #{minConsumption}
+            </if>
+            <if test="maxConsumption != null">
+                AND b.total_consumption &lt;= #{maxConsumption}
+            </if>
+        </where>
+        ORDER BY b.billing_year DESC, b.create_time DESC
+    </select>
+
+    <!-- 查询未缴账单：按欠费金额降序排列 -->
+    <select id="selectUnpaidBills" resultType="java.util.LinkedHashMap">
+        SELECT
+            b.id, b.billing_year AS billingYear, b.total_consumption AS totalConsumption,
+            b.bill_amount AS billAmount, b.paid_amount AS paidAmount,
+            b.paid_time AS paidTime, b.payment_method AS paymentMethod,
+            b.arrears_amount AS arrearsAmount, b.payment_status AS paymentStatus,
+            b.reminder_count AS reminderCount, b.payment_deadline AS paymentDeadline,
+            b.meter_id AS meterId, b.customer_id AS customerId,
+            c.customer_name AS customerName, c.contact, c.address
+        FROM electricity_bill b
+        LEFT JOIN electricity_customer c ON b.customer_id = c.id AND c.deleted = 0
+        <where>
+            b.deleted = 0
+            AND b.payment_status IN ('未缴', '部分缴纳', '逾期')
+            <include refid="CustomerScope"/>
+            <if test="billingYear != null">
+                AND b.billing_year = #{billingYear}
+            </if>
+            <if test="customerName != null and customerName != ''">
+                AND c.customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+        </where>
+        ORDER BY b.arrears_amount DESC
+    </select>
+
+    <!-- 按年份统计账单：GROUP BY + CASE WHEN 条件聚合 -->
+    <select id="selectBillStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            billing_year AS billingYear,
+            COUNT(*) AS totalBills,
+            ROUND(SUM(total_consumption), 2) AS totalConsumption,
+            ROUND(SUM(arrears_amount), 2) AS totalArrears,
+            ROUND(AVG(total_consumption), 2) AS avgConsumption,
+            SUM(CASE WHEN payment_status = '已缴' THEN 1 ELSE 0 END) AS paid,
+            SUM(CASE WHEN payment_status = '未缴' THEN 1 ELSE 0 END) AS unpaid,
+            SUM(CASE WHEN payment_status = '逾期' THEN 1 ELSE 0 END) AS overdue
+        FROM electricity_bill b
+        <where>
+            deleted = 0
+            <include refid="CustomerScope"/>
+        </where>
+        GROUP BY billing_year
+        ORDER BY billing_year ASC
+    </select>
+
+    <!-- 欠费金额区间分布：CASE WHEN 分组统计 -->
+    <select id="selectArrearsDistribution" resultType="java.util.LinkedHashMap">
+        SELECT
+            CASE
+                WHEN arrears_amount = 0 THEN '无欠费'
+                WHEN arrears_amount &lt; 5000 THEN '5000元以下'
+                WHEN arrears_amount &lt; 20000 THEN '5000-20000元'
+                ELSE '20000元以上'
+            END AS arrearsRange,
+            COUNT(*) AS count,
+            ROUND(SUM(arrears_amount), 2) AS totalAmount
+        FROM electricity_bill b
+        <where>
+            deleted = 0
+            <include refid="CustomerScope"/>
+        </where>
+        GROUP BY arrearsRange
+        ORDER BY MIN(arrears_amount)
+    </select>
+
+    <!-- 动态更新账单：<set> 标签仅更新非空字段 -->
+    <update id="updateBillSelective">
+        UPDATE electricity_bill
+        <set>
+            <if test="totalConsumption != null">total_consumption = #{totalConsumption},</if>
+            <if test="arrearsAmount != null">arrears_amount = #{arrearsAmount},</if>
+            <if test="paymentStatus != null">payment_status = #{paymentStatus},</if>
+            <if test="generateTime != null">generate_time = #{generateTime},</if>
+            <if test="reminderCount != null">reminder_count = #{reminderCount},</if>
+            <if test="paymentDeadline != null">payment_deadline = #{paymentDeadline},</if>
+            <if test="currentReading != null">current_reading = #{currentReading},</if>
+            <if test="previousReading != null">previous_reading = #{previousReading},</if>
+            <if test="meterReadingTime != null">meter_reading_time = #{meterReadingTime},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO electricity_bill (billing_year, total_consumption, arrears_amount, payment_status, generate_time,
+                                      reminder_count, payment_deadline, current_reading, previous_reading,
+                                      meter_reading_time, meter_id, customer_id, create_time, update_time)
+        VALUES (#{billingYear}, #{totalConsumption}, #{arrearsAmount}, #{paymentStatus}, #{generateTime},
+                #{reminderCount}, #{paymentDeadline}, #{currentReading}, #{previousReading},
+                #{meterReadingTime}, #{meterId}, #{customerId}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="ElectricityBill">
+        SELECT * FROM electricity_bill WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="ElectricityBill">
+        SELECT * FROM electricity_bill WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="ElectricityBill">
+        SELECT * FROM electricity_bill
+        <where>
+            deleted = 0
+            <if test="billingYear != null">
+                AND billing_year = #{billingYear}
+            </if>
+            <if test="paymentStatus != null and paymentStatus != ''">
+                AND payment_status = #{paymentStatus}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM electricity_bill
+        <where>
+            deleted = 0
+            <if test="billingYear != null">
+                AND billing_year = #{billingYear}
+            </if>
+            <if test="paymentStatus != null and paymentStatus != ''">
+                AND payment_status = #{paymentStatus}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM electricity_bill WHERE deleted = 0
+    </select>
+
+    <!-- 客户视图分页：强制 customer_id 条件，列表与 total 同源 -->
+    <select id="selectCustomerBillPage" resultType="ElectricityBill">
+        SELECT * FROM electricity_bill
+        <where>
+            deleted = 0
+            AND customer_id = #{customerId}
+            <if test="billingYear != null">
+                AND billing_year = #{billingYear}
+            </if>
+            <if test="paymentStatus != null and paymentStatus != ''">
+                AND payment_status = #{paymentStatus}
+            </if>
+        </where>
+        ORDER BY billing_year DESC, create_time DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countCustomerBillPage" resultType="long">
+        SELECT COUNT(*) FROM electricity_bill
+        <where>
+            deleted = 0
+            AND customer_id = #{customerId}
+            <if test="billingYear != null">
+                AND billing_year = #{billingYear}
+            </if>
+            <if test="paymentStatus != null and paymentStatus != ''">
+                AND payment_status = #{paymentStatus}
+            </if>
+        </where>
+    </select>
+
+    <update id="updateById">
+        UPDATE electricity_bill
+        <set>
+            <if test="billingYear != null">billing_year = #{billingYear},</if>
+            <if test="totalConsumption != null">total_consumption = #{totalConsumption},</if>
+            <if test="arrearsAmount != null">arrears_amount = #{arrearsAmount},</if>
+            <if test="paymentStatus != null">payment_status = #{paymentStatus},</if>
+            <if test="generateTime != null">generate_time = #{generateTime},</if>
+            <if test="reminderCount != null">reminder_count = #{reminderCount},</if>
+            <if test="paymentDeadline != null">payment_deadline = #{paymentDeadline},</if>
+            <if test="currentReading != null">current_reading = #{currentReading},</if>
+            <if test="previousReading != null">previous_reading = #{previousReading},</if>
+            <if test="meterReadingTime != null">meter_reading_time = #{meterReadingTime},</if>
+            <if test="meterId != null">meter_id = #{meterId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE electricity_bill SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+
+    <!-- 缴费前的账单快照：要拿到最新余额，不能被任何缓存挡住 -->
+    <select id="selectForPay" resultType="com.power.billing.pojo.ElectricityBill">
+        SELECT *
+        FROM electricity_bill
+        WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!--
+        扣款：状态守卫 + 余额守卫都写在 WHERE 里。
+        并发缴纳同一笔账单时，后到的请求 arrears_amount 已经不够扣，影响 0 行，
+        服务层看到 0 行就报「账单状态已变化」，不需要悲观锁。
+    -->
+    <update id="applyPayment">
+        UPDATE electricity_bill
+        SET paid_amount = COALESCE(paid_amount, 0) + #{amount},
+            arrears_amount = COALESCE(arrears_amount, 0) - #{amount},
+            payment_status = #{status},
+            paid_time = #{payTime},
+            payment_method = #{paymentMethod},
+            update_time = #{payTime}
+        WHERE id = #{id}
+          AND deleted = 0
+          AND payment_status IN ('未缴', '逾期', '部分缴纳')
+          AND COALESCE(arrears_amount, 0) &gt;= #{amount}
+    </update>
+</mapper>

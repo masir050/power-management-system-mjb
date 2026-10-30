@@ -1,0 +1,60 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: power-auth
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 只连 auth 自己的库；微服务不跨库 join，需要别的服务数据时走 Feign
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/power_auth?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        file-extension: yaml
+        import-check:
+          enabled: false
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  # Mapper XML 里大量使用简名（resultType="SysUser"），必须注册包扫描后简名才能解析成
+  # com.power.auth.pojo.SysUser。漏了这行会在启动时抛
+  # "Could not resolve type alias 'SysUser'"，且编译期完全不会报错。
+  type-aliases-package: com.power.auth.pojo
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL；生产改为 org.apache.ibatis.logging.nologging.NoLoggingImpl
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+power:
+  jwt:
+    secret: ${JWT_SECRET:power-management-jwt-secret-key-2026-please-change-in-prod}
+    expire-minutes: 1440
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.power.auth: DEBUG

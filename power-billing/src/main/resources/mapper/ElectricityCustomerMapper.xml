@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 用电客户 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合 -->
+<mapper namespace="com.power.billing.mapper.ElectricityCustomerMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, customer_name, electricity_category, address, contact,
+        electricity_status, create_time, update_time, deleted
+    </sql>
+
+    <!-- 用电客户视图结果映射 -->
+    <resultMap id="CustomerVOResultMap" type="com.power.billing.pojo.ElectricityCustomerVO">
+        <id column="id" property="id"/>
+        <result column="customer_name" property="customerName"/>
+        <result column="electricity_category" property="electricityCategory"/>
+        <result column="address" property="address"/>
+        <result column="contact" property="contact"/>
+        <result column="electricity_status" property="electricityStatus"/>
+    </resultMap>
+
+    <!-- 查询客户详情及关联电表：LEFT JOIN 关联 smart_meter -->
+    <select id="selectCustomerWithMeters" resultType="java.util.LinkedHashMap">
+        SELECT
+            c.id, c.customer_name AS customerName, c.electricity_category AS electricityCategory,
+            c.address, c.contact, c.electricity_status AS electricityStatus,
+            m.id AS meterId, m.model, m.meter_status AS meterStatus,
+            m.install_date AS meterInstallDate
+        FROM electricity_customer c
+        LEFT JOIN smart_meter m ON c.id = m.customer_id AND m.deleted = 0
+        WHERE c.id = #{id} AND c.deleted = 0
+    </select>
+
+    <!-- 分页查询客户：支持按名称/用电类别/状态/联系方式动态过滤 -->
+    <select id="selectCustomerPage" resultMap="CustomerVOResultMap">
+        SELECT <include refid="BaseColumns"/>
+        FROM electricity_customer
+        <where>
+            deleted = 0
+            <if test="customerName != null and customerName != ''">
+                AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="electricityCategory != null and electricityCategory != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="electricityStatus != null and electricityStatus != ''">
+                AND electricity_status = #{electricityStatus}
+            </if>
+            <if test="contact != null and contact != ''">
+                AND contact LIKE CONCAT('%', #{contact}, '%')
+            </if>
+        </where>
+        ORDER BY create_time ASC
+    </select>
+
+    <!-- 统计客户类别及用电状态：CASE WHEN 条件聚合 -->
+    <select id="selectCustomerStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalCustomers,
+            SUM(CASE WHEN electricity_category = '居民' THEN 1 ELSE 0 END) AS residential,
+            SUM(CASE WHEN electricity_category = '商业' THEN 1 ELSE 0 END) AS commercial,
+            SUM(CASE WHEN electricity_category = '工业' THEN 1 ELSE 0 END) AS industrial,
+            SUM(CASE WHEN electricity_category = '农业' THEN 1 ELSE 0 END) AS agricultural,
+            SUM(CASE WHEN electricity_status = '正常用电' THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN electricity_status = '暂停' THEN 1 ELSE 0 END) AS paused,
+            SUM(CASE WHEN electricity_status = '销户' THEN 1 ELSE 0 END) AS closed
+        FROM electricity_customer
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按用电类别分组统计：GROUP BY + CASE WHEN 条件聚合 -->
+    <select id="selectCustomerGroupByCategory" resultType="java.util.LinkedHashMap">
+        SELECT
+            electricity_category AS category,
+            COUNT(*) AS count,
+            SUM(CASE WHEN electricity_status = '正常用电' THEN 1 ELSE 0 END) AS activeCount
+        FROM electricity_customer
+        WHERE deleted = 0
+        GROUP BY electricity_category
+        ORDER BY count ASC
+    </select>
+
+    <!-- 动态更新客户：<set> 标签仅更新非空字段 -->
+    <update id="updateCustomerSelective">
+        UPDATE electricity_customer
+        <set>
+            <if test="customerName != null">customer_name = #{customerName},</if>
+            <if test="electricityCategory != null">electricity_category = #{electricityCategory},</if>
+            <if test="address != null">address = #{address},</if>
+            <if test="contact != null">contact = #{contact},</if>
+            <if test="electricityStatus != null">electricity_status = #{electricityStatus},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO electricity_customer (customer_name, electricity_category, address, contact, electricity_status,
+                                          create_time, update_time)
+        VALUES (#{customerName}, #{electricityCategory}, #{address}, #{contact}, #{electricityStatus}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="ElectricityCustomer">
+        SELECT * FROM electricity_customer WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="ElectricityCustomer">
+        SELECT * FROM electricity_customer WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="ElectricityCustomer">
+        SELECT * FROM electricity_customer
+        <where>
+            deleted = 0
+            <if test="customerName != null and customerName != ''">
+                AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="electricityCategory != null and electricityCategory != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="electricityStatus != null and electricityStatus != ''">
+                AND electricity_status = #{electricityStatus}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM electricity_customer
+        <where>
+            deleted = 0
+            <if test="customerName != null and customerName != ''">
+                AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="electricityCategory != null and electricityCategory != ''">
+                AND electricity_category = #{electricityCategory}
+            </if>
+            <if test="electricityStatus != null and electricityStatus != ''">
+                AND electricity_status = #{electricityStatus}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM electricity_customer WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE electricity_customer
+        <set>
+            <if test="customerName != null">customer_name = #{customerName},</if>
+            <if test="electricityCategory != null">electricity_category = #{electricityCategory},</if>
+            <if test="address != null">address = #{address},</if>
+            <if test="contact != null">contact = #{contact},</if>
+            <if test="electricityStatus != null">electricity_status = #{electricityStatus},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE electricity_customer SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

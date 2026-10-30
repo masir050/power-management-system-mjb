@@ -1,0 +1,43 @@
+# Java
+*.class
+*.jar
+target/
+
+# Maven
+.log
+*.tmp
+
+# IDE
+.idea/
+*.iml
+.settings/
+.project
+.classpath
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Env
+.env
+.env.local
+
+# 旧单体实现（仅本机保留，不纳入仓库）
+/src/
+/backup-single-app/
+
+# 本机临时调试脚本
+/t3.sh
+/t3.mjs
+
+# 调试图标
+/.shots/
+/.shots-role/

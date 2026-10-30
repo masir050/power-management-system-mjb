@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 检修记录 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合
+     - LIMIT 限制结果条数 -->
+<mapper namespace="com.power.alert.mapper.MaintenanceRecordMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, occurrence_time, fault_type, fault_description, repair_result,
+        completion_time, repair_hours, repair_priority, responsibility_division,
+        equipment_id, staff_id, create_time, update_time, deleted
+    </sql>
+
+    <!-- 检修记录视图结果映射 -->
+    <resultMap id="RecordVOResultMap" type="com.power.alert.pojo.MaintenanceRecordVO">
+        <id column="id" property="id"/>
+        <result column="occurrence_time" property="occurrenceTime"/>
+        <result column="fault_type" property="faultType"/>
+        <result column="fault_description" property="faultDescription"/>
+        <result column="repair_result" property="repairResult"/>
+        <result column="completion_time" property="completionTime"/>
+        <result column="repair_hours" property="repairHours"/>
+        <result column="repair_priority" property="repairPriority"/>
+        <result column="responsibility_division" property="responsibilityDivision"/>
+        <result column="equipment_id" property="equipmentId"/>
+        <result column="staff_id" property="staffId"/>
+    </resultMap>
+
+    <!-- 查询今日告警数量（用于仪表盘KPI） -->
+    <select id="countTodayAlerts" resultType="long">
+        SELECT COUNT(*) FROM maintenance_record
+        WHERE deleted = 0 AND occurrence_time &gt;= #{startTime} AND occurrence_time &lt; #{endTime}
+    </select>
+
+    <!-- 待处理告警：走 idx_deleted_status_level_time 的最左列，只数 PENDING 这一档 -->
+    <select id="countPendingAlerts" resultType="long">
+        SELECT COUNT(*) FROM alert WHERE deleted = 0 AND alert_status = 'PENDING'
+    </select>
+
+    <!--
+      查询检修详情
+
+      【跨库问题修正】原 SQL 里 LEFT JOIN power_equipment 在单体库能跑，
+      但拆库后 power_equipment 在 power_device 库，本条 SQL 会直接报
+      "Table 'power_alert.power_equipment' doesn't exist"——编译期发现不了，
+      一调列表接口就 500。现在只 JOIN 本库的 maintenance_staff，
+      设备名与型号由 MaintenanceRecordService 通过 DeviceClient 远程补全。
+    -->
+    <select id="selectRecordWithDetails" resultType="java.util.LinkedHashMap">
+        SELECT
+            r.id, r.occurrence_time AS occurrenceTime, r.fault_type AS faultType,
+            r.fault_description AS faultDescription, r.repair_result AS repairResult,
+            r.completion_time AS completionTime, r.repair_hours AS repairHours,
+            r.repair_priority AS repairPriority, r.responsibility_division AS responsibilityDivision,
+            r.equipment_id AS equipmentId, r.staff_id AS staffId,
+            s.name AS staffName, s.department AS staffDepartment, s.position AS staffPosition
+        FROM maintenance_record r
+        LEFT JOIN maintenance_staff s ON r.staff_id = s.id
+        WHERE r.id = #{id} AND r.deleted = 0
+    </select>
+
+    <!--
+      分页查询检修记录：支持按故障类型/优先级/设备/人员/时间范围动态过滤
+      【跨库修正】不再 JOIN power_equipment，设备信息由服务层远程补全
+    -->
+    <select id="selectRecordPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            r.id, r.occurrence_time AS occurrenceTime, r.fault_type AS faultType,
+            r.fault_description AS faultDescription, r.repair_result AS repairResult,
+            r.completion_time AS completionTime, r.repair_hours AS repairHours,
+            r.repair_priority AS repairPriority, r.responsibility_division AS responsibilityDivision,
+            r.equipment_id AS equipmentId, r.staff_id AS staffId,
+            s.name AS staffName
+        FROM maintenance_record r
+        LEFT JOIN maintenance_staff s ON r.staff_id = s.id
+        <where>
+            r.deleted = 0
+            <if test="faultType != null and faultType != ''">
+                AND r.fault_type LIKE CONCAT('%', #{faultType}, '%')
+            </if>
+            <if test="repairPriority != null and repairPriority != ''">
+                AND r.repair_priority = #{repairPriority}
+            </if>
+            <if test="equipmentId != null">
+                AND r.equipment_id = #{equipmentId}
+            </if>
+            <if test="staffId != null">
+                AND r.staff_id = #{staffId}
+            </if>
+            <if test="startTime != null">
+                AND r.occurrence_time &gt;= #{startTime}
+            </if>
+            <if test="endTime != null">
+                AND r.occurrence_time &lt;= #{endTime}
+            </if>
+        </where>
+        ORDER BY r.occurrence_time DESC
+    </select>
+
+    <!-- 统计检修记录：CASE WHEN 条件聚合 + 平均工时 -->
+    <select id="selectRecordStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalRecords,
+            SUM(CASE WHEN repair_priority = '紧急' THEN 1 ELSE 0 END) AS emergency,
+            SUM(CASE WHEN repair_priority = '高' THEN 1 ELSE 0 END) AS high,
+            SUM(CASE WHEN repair_priority = '中' THEN 1 ELSE 0 END) AS medium,
+            SUM(CASE WHEN repair_priority = '低' THEN 1 ELSE 0 END) AS low,
+            ROUND(AVG(repair_hours), 2) AS avgRepairHours,
+            ROUND(SUM(repair_hours), 2) AS totalRepairHours
+        FROM maintenance_record
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按故障类型分组统计：GROUP BY 聚合 + 平均工时 -->
+    <select id="selectRecordGroupByFaultType" resultType="java.util.LinkedHashMap">
+        SELECT
+            fault_type AS faultType,
+            COUNT(*) AS count,
+            ROUND(AVG(repair_hours), 2) AS avgHours
+        FROM maintenance_record
+        WHERE deleted = 0
+        GROUP BY fault_type
+        ORDER BY count ASC
+    </select>
+
+    <!--
+      查询最近告警：LIMIT 限制返回条数
+      【跨库修正】去掉 power_equipment 的 JOIN，只保留本库人员表；
+      设备名在服务层通过 DeviceClient 补全。
+      排序改为 DESC（原 ASC 取到的是"最早的"记录，与"最近告警"语义相反）
+    -->
+    <select id="selectRecentAlerts" resultType="java.util.LinkedHashMap">
+        SELECT
+            r.id, r.occurrence_time AS occurrenceTime, r.fault_type AS faultType,
+            r.fault_description AS faultDescription, r.repair_priority AS repairPriority,
+            r.equipment_id AS equipmentId,
+            s.name AS staffName
+        FROM maintenance_record r
+        LEFT JOIN maintenance_staff s ON r.staff_id = s.id
+        WHERE r.deleted = 0
+        ORDER BY r.occurrence_time DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 动态更新检修记录：<set> 标签仅更新非空字段 -->
+    <update id="updateRecordSelective">
+        UPDATE maintenance_record
+        <set>
+            <if test="occurrenceTime != null">occurrence_time = #{occurrenceTime},</if>
+            <if test="faultType != null">fault_type = #{faultType},</if>
+            <if test="faultDescription != null">fault_description = #{faultDescription},</if>
+            <if test="repairResult != null">repair_result = #{repairResult},</if>
+            <if test="completionTime != null">completion_time = #{completionTime},</if>
+            <if test="repairHours != null">repair_hours = #{repairHours},</if>
+            <if test="repairPriority != null">repair_priority = #{repairPriority},</if>
+            <if test="responsibilityDivision != null">responsibility_division = #{responsibilityDivision},</if>
+            <if test="equipmentId != null">equipment_id = #{equipmentId},</if>
+            <if test="staffId != null">staff_id = #{staffId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO maintenance_record (occurrence_time, fault_type, fault_description, repair_result, completion_time,
+                                        repair_hours, repair_priority, responsibility_division, equipment_id, staff_id,
+                                        create_time, update_time)
+        VALUES (#{occurrenceTime}, #{faultType}, #{faultDescription}, #{repairResult}, #{completionTime},
+                #{repairHours}, #{repairPriority}, #{responsibilityDivision}, #{equipmentId}, #{staffId},
+                NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="MaintenanceRecord">
+        SELECT * FROM maintenance_record WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="MaintenanceRecord">
+        SELECT * FROM maintenance_record WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="MaintenanceRecord">
+        SELECT * FROM maintenance_record
+        <where>
+            deleted = 0
+            <if test="faultType != null and faultType != ''">
+                AND fault_type LIKE CONCAT('%', #{faultType}, '%')
+            </if>
+            <if test="repairPriority != null and repairPriority != ''">
+                AND repair_priority = #{repairPriority}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM maintenance_record
+        <where>
+            deleted = 0
+            <if test="faultType != null and faultType != ''">
+                AND fault_type LIKE CONCAT('%', #{faultType}, '%')
+            </if>
+            <if test="repairPriority != null and repairPriority != ''">
+                AND repair_priority = #{repairPriority}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM maintenance_record WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE maintenance_record
+        <set>
+            <if test="occurrenceTime != null">occurrence_time = #{occurrenceTime},</if>
+            <if test="faultType != null">fault_type = #{faultType},</if>
+            <if test="faultDescription != null">fault_description = #{faultDescription},</if>
+            <if test="repairResult != null">repair_result = #{repairResult},</if>
+            <if test="completionTime != null">completion_time = #{completionTime},</if>
+            <if test="repairHours != null">repair_hours = #{repairHours},</if>
+            <if test="repairPriority != null">repair_priority = #{repairPriority},</if>
+            <if test="responsibilityDivision != null">responsibility_division = #{responsibilityDivision},</if>
+            <if test="equipmentId != null">equipment_id = #{equipmentId},</if>
+            <if test="staffId != null">staff_id = #{staffId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE maintenance_record SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.power</groupId>
+        <artifactId>power-management</artifactId>
+        <version>2.0.0</version>
+    </parent>
+
+    <artifactId>power-common</artifactId>
+    <name>power-common</name>
+    <description>公共模块：统一响应、异常体系、JWT、Redis 缓存与分布式锁、RabbitMQ 常量</description>
+
+    <dependencies>
+        <!-- Web：统一响应 / 全局异常处理需要 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <!-- 只用到 BCryptPasswordEncoder 做密码哈希，不需要整个 spring-boot-starter-security。
+             用 starter 会把 SecurityAutoConfiguration 一起带进每个业务服务，默认行为是：
+             所有请求都被拦截、启用 HTTP Basic（响应 401 + WWW-Authenticate: Basic），
+             连 /api/auth/login 都进不去。鉴权已经在网关统一做了，服务端不需要这道多余的墙。
+             spring-security-crypto 是纯工具库，不含任何自动配置。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
+        <!-- JWT -->
+        <dependency>
+            <groupId>com.auth0</groupId>
+            <artifactId>java-jwt</artifactId>
+            <version>${java-jwt.version}</version>
+        </dependency>
+
+        <!-- Redis 客户端（StringRedisTemplate 用于缓存） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Redisson 分布式锁：只用核心包，不用 starter。
+             starter 会按 spring.data.redis.* 自动装配一个 RedissonClient，
+             与 RedissonConfig 里手工构造的实例冲突（两个 RLock 视图不共享看门狗配置）。 -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>${redisson.version}</version>
+        </dependency>
+
+        <!-- RabbitMQ 告警事件 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- MyBatis：common 里的 BaseMapper/分页基类需要 @Param 与 Mapper 契约 -->
+        <dependency>
+            <groupId>org.mybatis.spring.boot</groupId>
+            <artifactId>mybatis-spring-boot-starter</artifactId>
+            <version>${mybatis-spring-boot.version}</version>
+        </dependency>
+
+        <!-- LocalDate/LocalDateTime 序列化 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
+        <!-- OpenFeign 核心 API：只为 RequestInterceptor 这个接口，用于把登录身份
+             透传到下游服务。用 optional 是因为 power-auth / power-gateway / power-device
+             这些不写 Feign 客户端的模块不该被强行拉进 feign 依赖；
+             真正用到 Feign 的模块本来就会引 spring-cloud-starter-openfeign，运行时类一定在。
+             FeignIdentityConfig 上也加了 @ConditionalOnClass，缺类时不会装配。 -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 智能电表 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合 -->
+<mapper namespace="com.power.device.mapper.SmartMeterMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, model, install_date, verification_cycle, meter_status, install_location,
+        bind_date, ratio, customer_id, create_time, update_time, deleted
+    </sql>
+
+    <!-- 智能电表视图结果映射 -->
+    <resultMap id="MeterVOResultMap" type="com.power.device.pojo.SmartMeterVO">
+        <id column="id" property="id"/>
+        <result column="model" property="model"/>
+        <result column="install_date" property="installDate"/>
+        <result column="verification_cycle" property="verificationCycle"/>
+        <result column="meter_status" property="meterStatus"/>
+        <result column="install_location" property="installLocation"/>
+        <result column="bind_date" property="bindDate"/>
+        <result column="ratio" property="ratio"/>
+        <result column="customer_id" property="customerId"/>
+    </resultMap>
+
+    <!-- 查询电表详情：LEFT JOIN 关联用电客户 -->
+    <select id="selectMeterWithCustomer" resultType="java.util.LinkedHashMap">
+        SELECT
+            m.id, m.model, m.install_date AS installDate, m.verification_cycle AS verificationCycle,
+            m.meter_status AS meterStatus, m.install_location AS installLocation,
+            m.bind_date AS bindDate, m.ratio,
+            m.customer_id AS customerId,
+            c.customer_name AS customerName, c.electricity_category AS electricityCategory,
+            c.address, c.contact
+        FROM smart_meter m
+        LEFT JOIN electricity_customer c ON m.customer_id = c.id
+        WHERE m.id = #{id} AND m.deleted = 0
+    </select>
+
+    <!-- 分页查询电表：支持按型号/状态/客户/安装位置动态过滤 -->
+    <select id="selectMeterPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            m.id, m.model, m.install_date AS installDate, m.verification_cycle AS verificationCycle,
+            m.meter_status AS meterStatus, m.install_location AS installLocation,
+            m.bind_date AS bindDate, m.ratio,
+            m.customer_id AS customerId,
+            c.customer_name AS customerName
+        FROM smart_meter m
+        LEFT JOIN electricity_customer c ON m.customer_id = c.id
+        <where>
+            m.deleted = 0
+            <if test="model != null and model != ''">
+                AND m.model LIKE CONCAT('%', #{model}, '%')
+            </if>
+            <if test="meterStatus != null and meterStatus != ''">
+                AND m.meter_status = #{meterStatus}
+            </if>
+            <if test="customerId != null">
+                AND m.customer_id = #{customerId}
+            </if>
+            <if test="installLocation != null and installLocation != ''">
+                AND m.install_location LIKE CONCAT('%', #{installLocation}, '%')
+            </if>
+        </where>
+        ORDER BY m.create_time ASC
+    </select>
+
+    <!-- 统计电表运行状态：CASE WHEN 条件聚合 -->
+    <select id="selectMeterStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalMeters,
+            SUM(CASE WHEN meter_status = '正常' THEN 1 ELSE 0 END) AS normal,
+            SUM(CASE WHEN meter_status = '故障' THEN 1 ELSE 0 END) AS faulty,
+            SUM(CASE WHEN meter_status = '待检定' THEN 1 ELSE 0 END) AS pendingVerification
+        FROM smart_meter
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按型号分组统计电表状态：GROUP BY + CASE WHEN 条件聚合 -->
+    <select id="selectMetersByStatusGroupByModel" resultType="java.util.LinkedHashMap">
+        SELECT
+            model,
+            COUNT(*) AS total,
+            SUM(CASE WHEN meter_status = '正常' THEN 1 ELSE 0 END) AS normalCount,
+            SUM(CASE WHEN meter_status = '故障' THEN 1 ELSE 0 END) AS faultyCount
+        FROM smart_meter
+        WHERE deleted = 0
+        GROUP BY model
+        ORDER BY total ASC
+    </select>
+
+    <!-- 动态更新电表：<set> 标签仅更新非空字段 -->
+    <update id="updateMeterSelective">
+        UPDATE smart_meter
+        <set>
+            <if test="model != null">model = #{model},</if>
+            <if test="installDate != null">install_date = #{installDate},</if>
+            <if test="verificationCycle != null">verification_cycle = #{verificationCycle},</if>
+            <if test="meterStatus != null">meter_status = #{meterStatus},</if>
+            <if test="installLocation != null">install_location = #{installLocation},</if>
+            <if test="bindDate != null">bind_date = #{bindDate},</if>
+            <if test="ratio != null">ratio = #{ratio},</if>
+            <if test="customerId != null">customer_id = #{customerId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO smart_meter (model, install_date, verification_cycle, meter_status, install_location,
+                                 bind_date, ratio, customer_id, create_time, update_time)
+        VALUES (#{model}, #{installDate}, #{verificationCycle}, #{meterStatus}, #{installLocation},
+                #{bindDate}, #{ratio}, #{customerId}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="SmartMeter">
+        SELECT * FROM smart_meter WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="SmartMeter">
+        SELECT * FROM smart_meter WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="SmartMeter">
+        SELECT * FROM smart_meter
+        <where>
+            deleted = 0
+            <if test="model != null and model != ''">
+                AND model LIKE CONCAT('%', #{model}, '%')
+            </if>
+            <if test="meterStatus != null and meterStatus != ''">
+                AND meter_status = #{meterStatus}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM smart_meter
+        <where>
+            deleted = 0
+            <if test="model != null and model != ''">
+                AND model LIKE CONCAT('%', #{model}, '%')
+            </if>
+            <if test="meterStatus != null and meterStatus != ''">
+                AND meter_status = #{meterStatus}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM smart_meter WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE smart_meter
+        <set>
+            <if test="model != null">model = #{model},</if>
+            <if test="installDate != null">install_date = #{installDate},</if>
+            <if test="verificationCycle != null">verification_cycle = #{verificationCycle},</if>
+            <if test="meterStatus != null">meter_status = #{meterStatus},</if>
+            <if test="installLocation != null">install_location = #{installLocation},</if>
+            <if test="bindDate != null">bind_date = #{bindDate},</if>
+            <if test="ratio != null">ratio = #{ratio},</if>
+            <if test="customerId != null">customer_id = #{customerId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE smart_meter SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

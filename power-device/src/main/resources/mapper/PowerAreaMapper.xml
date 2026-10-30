@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 供电区域 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - <foreach> 批量操作
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合 -->
+<mapper namespace="com.power.device.mapper.PowerAreaMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, area_name, admin_level, jurisdiction, leader, create_time, update_time, deleted
+    </sql>
+
+    <!-- 供电区域视图结果映射 -->
+    <resultMap id="AreaVOResultMap" type="com.power.device.pojo.PowerAreaVO">
+        <id column="id" property="id"/>
+        <result column="area_name" property="areaName"/>
+        <result column="admin_level" property="adminLevel"/>
+        <result column="jurisdiction" property="jurisdiction"/>
+        <result column="leader" property="leader"/>
+    </resultMap>
+
+    <!-- 分页查询供电区域：支持按名称/级别/负责人动态模糊过滤 -->
+    <select id="selectAreaPage" resultMap="AreaVOResultMap">
+        SELECT <include refid="BaseColumns"/>
+        FROM power_area
+        <where>
+            deleted = 0
+            <if test="areaName != null and areaName != ''">
+                AND area_name LIKE CONCAT('%', #{areaName}, '%')
+            </if>
+            <if test="adminLevel != null and adminLevel != ''">
+                AND admin_level = #{adminLevel}
+            </if>
+            <if test="leader != null and leader != ''">
+                AND leader LIKE CONCAT('%', #{leader}, '%')
+            </if>
+        </where>
+        ORDER BY create_time ASC
+    </select>
+
+    <!-- 查询各区域及下辖变电站数量：LEFT JOIN + GROUP BY 聚合 -->
+    <select id="selectAreaWithSubstationCount" resultType="java.util.LinkedHashMap">
+        SELECT
+            a.id,
+            a.area_name AS areaName,
+            a.admin_level AS adminLevel,
+            a.jurisdiction,
+            a.leader,
+            COUNT(s.id) AS substationCount
+        FROM power_area a
+        LEFT JOIN substation s ON a.id = s.area_id AND s.deleted = 0
+        <where>
+            a.deleted = 0
+            <if test="areaName != null and areaName != ''">
+                AND a.area_name LIKE CONCAT('%', #{areaName}, '%')
+            </if>
+        </where>
+        GROUP BY a.id, a.area_name, a.admin_level, a.jurisdiction, a.leader
+        ORDER BY substationCount ASC
+    </select>
+
+    <!-- 统计各行政级别区域数量：CASE WHEN 条件聚合 -->
+    <select id="selectAreaStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalAreas,
+            SUM(CASE WHEN admin_level = '省级' THEN 1 ELSE 0 END) AS provinceLevel,
+            SUM(CASE WHEN admin_level = '市级' THEN 1 ELSE 0 END) AS cityLevel,
+            SUM(CASE WHEN admin_level = '县级' THEN 1 ELSE 0 END) AS countyLevel,
+            SUM(CASE WHEN admin_level = '乡镇级' THEN 1 ELSE 0 END) AS townshipLevel
+        FROM power_area
+        WHERE deleted = 0
+    </select>
+
+    <!-- 动态更新供电区域：<set> 标签仅更新非空字段 -->
+    <update id="updateAreaSelective">
+        UPDATE power_area
+        <set>
+            <if test="areaName != null">area_name = #{areaName},</if>
+            <if test="adminLevel != null">admin_level = #{adminLevel},</if>
+            <if test="jurisdiction != null">jurisdiction = #{jurisdiction},</if>
+            <if test="leader != null">leader = #{leader},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 批量逻辑删除：<foreach> 实现 IN 查询 -->
+    <delete id="deleteAreaByIds">
+        UPDATE power_area SET deleted = 1, update_time = NOW()
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO power_area (area_name, admin_level, jurisdiction, leader, create_time, update_time)
+        VALUES (#{areaName}, #{adminLevel}, #{jurisdiction}, #{leader}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="PowerArea">
+        SELECT * FROM power_area WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="PowerArea">
+        SELECT * FROM power_area WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="PowerArea">
+        SELECT * FROM power_area
+        <where>
+            deleted = 0
+            <if test="areaName != null and areaName != ''">
+                AND area_name LIKE CONCAT('%', #{areaName}, '%')
+            </if>
+            <if test="adminLevel != null and adminLevel != ''">
+                AND admin_level = #{adminLevel}
+            </if>
+            <if test="leader != null and leader != ''">
+                AND leader LIKE CONCAT('%', #{leader}, '%')
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM power_area
+        <where>
+            deleted = 0
+            <if test="areaName != null and areaName != ''">
+                AND area_name LIKE CONCAT('%', #{areaName}, '%')
+            </if>
+            <if test="adminLevel != null and adminLevel != ''">
+                AND admin_level = #{adminLevel}
+            </if>
+            <if test="leader != null and leader != ''">
+                AND leader LIKE CONCAT('%', #{leader}, '%')
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM power_area WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE power_area
+        <set>
+            <if test="areaName != null">area_name = #{areaName},</if>
+            <if test="adminLevel != null">admin_level = #{adminLevel},</if>
+            <if test="jurisdiction != null">jurisdiction = #{jurisdiction},</if>
+            <if test="leader != null">leader = #{leader},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE power_area SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

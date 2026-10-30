@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 变电站 Mapper XML
+     演示 MyBatis 手写 SQL 的各种特性：
+     - <sql>/<include> SQL 片段重用
+     - <where>/<if> 动态条件拼接
+     - <set> 动态更新
+     - LEFT JOIN + GROUP BY 关联统计
+     - CASE WHEN 条件聚合 -->
+<mapper namespace="com.power.device.mapper.SubstationMapper">
+
+    <!-- 基础查询列（可被 <include> 引用） -->
+    <sql id="BaseColumns">
+        id, name, voltage_level, commission_date, run_status, jurisdiction_years,
+        management_level, area_id, create_time, update_time, deleted
+    </sql>
+
+    <!-- 变电站视图结果映射 -->
+    <resultMap id="SubstationVOResultMap" type="com.power.device.pojo.SubstationVO">
+        <id column="id" property="id"/>
+        <result column="name" property="name"/>
+        <result column="voltage_level" property="voltageLevel"/>
+        <result column="commission_date" property="commissionDate"/>
+        <result column="run_status" property="runStatus"/>
+        <result column="jurisdiction_years" property="jurisdictionYears"/>
+        <result column="management_level" property="managementLevel"/>
+        <result column="area_id" property="areaId"/>
+    </resultMap>
+
+    <!-- 查询变电站详情：LEFT JOIN 关联供电区域 -->
+    <select id="selectSubstationWithArea" resultType="java.util.LinkedHashMap">
+        SELECT
+            s.id, s.name, s.voltage_level AS voltageLevel, s.commission_date AS commissionDate,
+            s.run_status AS runStatus, s.jurisdiction_years AS jurisdictionYears,
+            s.management_level AS managementLevel,
+            a.area_name AS areaName, a.admin_level AS areaLevel, a.leader AS areaLeader
+        FROM substation s
+        LEFT JOIN power_area a ON s.area_id = a.id
+        WHERE s.id = #{id} AND s.deleted = 0
+    </select>
+
+    <!-- 分页查询变电站：支持按名称/电压等级/运行状态/区域/管理级别动态过滤 -->
+    <select id="selectSubstationPage" resultType="java.util.LinkedHashMap">
+        SELECT
+            s.id, s.name, s.voltage_level AS voltageLevel, s.commission_date AS commissionDate,
+            s.run_status AS runStatus, s.jurisdiction_years AS jurisdictionYears,
+            s.management_level AS managementLevel, s.area_id AS areaId,
+            a.area_name AS areaName
+        FROM substation s
+        LEFT JOIN power_area a ON s.area_id = a.id
+        <where>
+            s.deleted = 0
+            <if test="name != null and name != ''">
+                AND s.name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="voltageLevel != null and voltageLevel != ''">
+                AND s.voltage_level = #{voltageLevel}
+            </if>
+            <if test="runStatus != null and runStatus != ''">
+                AND s.run_status = #{runStatus}
+            </if>
+            <if test="areaId != null">
+                AND s.area_id = #{areaId}
+            </if>
+            <if test="managementLevel != null and managementLevel != ''">
+                AND s.management_level = #{managementLevel}
+            </if>
+        </where>
+        ORDER BY s.create_time ASC
+    </select>
+
+    <!-- 统计变电站运行状态：CASE WHEN 条件聚合 + 平均管辖年限 -->
+    <select id="selectSubstationStatistics" resultType="java.util.LinkedHashMap">
+        SELECT
+            COUNT(*) AS totalSubstations,
+            SUM(CASE WHEN run_status = '运行中' THEN 1 ELSE 0 END) AS running,
+            SUM(CASE WHEN run_status = '停运' THEN 1 ELSE 0 END) AS stopped,
+            SUM(CASE WHEN run_status = '检修中' THEN 1 ELSE 0 END) AS maintenance,
+            AVG(jurisdiction_years) AS avgJurisdictionYears
+        FROM substation
+        WHERE deleted = 0
+    </select>
+
+    <!-- 按电压等级分组统计：GROUP BY 聚合 + 平均年限 -->
+    <select id="selectSubstationGroupByVoltage" resultType="java.util.LinkedHashMap">
+        SELECT
+            voltage_level AS voltageLevel,
+            COUNT(*) AS count,
+            ROUND(AVG(jurisdiction_years), 1) AS avgYears
+        FROM substation
+        WHERE deleted = 0
+        GROUP BY voltage_level
+        ORDER BY count ASC
+    </select>
+
+    <!-- 动态更新变电站：<set> 标签仅更新非空字段 -->
+    <update id="updateSubstationSelective">
+        UPDATE substation
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="voltageLevel != null">voltage_level = #{voltageLevel},</if>
+            <if test="commissionDate != null">commission_date = #{commissionDate},</if>
+            <if test="runStatus != null">run_status = #{runStatus},</if>
+            <if test="jurisdictionYears != null">jurisdiction_years = #{jurisdictionYears},</if>
+            <if test="managementLevel != null">management_level = #{managementLevel},</if>
+            <if test="areaId != null">area_id = #{areaId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO substation (name, voltage_level, commission_date, run_status, jurisdiction_years,
+                                management_level, area_id, create_time, update_time)
+        VALUES (#{name}, #{voltageLevel}, #{commissionDate}, #{runStatus}, #{jurisdictionYears},
+                #{managementLevel}, #{areaId}, NOW(), NOW())
+    </insert>
+
+    <select id="selectById" resultType="Substation">
+        SELECT * FROM substation WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="selectByPage" resultType="Substation">
+        SELECT * FROM substation WHERE deleted = 0 ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByPageWithConditions" resultType="Substation">
+        SELECT * FROM substation
+        <where>
+            deleted = 0
+            <if test="name != null and name != ''">
+                AND name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="voltageLevel != null and voltageLevel != ''">
+                AND voltage_level = #{voltageLevel}
+            </if>
+            <if test="runStatus != null and runStatus != ''">
+                AND run_status = #{runStatus}
+            </if>
+        </where>
+        ORDER BY ${sortField} ${sortOrder} LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByPageWithConditions" resultType="long">
+        SELECT COUNT(*) FROM substation
+        <where>
+            deleted = 0
+            <if test="name != null and name != ''">
+                AND name LIKE CONCAT('%', #{name}, '%')
+            </if>
+            <if test="voltageLevel != null and voltageLevel != ''">
+                AND voltage_level = #{voltageLevel}
+            </if>
+            <if test="runStatus != null and runStatus != ''">
+                AND run_status = #{runStatus}
+            </if>
+        </where>
+    </select>
+
+    <select id="countByPage" resultType="long">
+        SELECT COUNT(*) FROM substation WHERE deleted = 0
+    </select>
+
+    <update id="updateById">
+        UPDATE substation
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="voltageLevel != null">voltage_level = #{voltageLevel},</if>
+            <if test="commissionDate != null">commission_date = #{commissionDate},</if>
+            <if test="runStatus != null">run_status = #{runStatus},</if>
+            <if test="jurisdictionYears != null">jurisdiction_years = #{jurisdictionYears},</if>
+            <if test="managementLevel != null">management_level = #{managementLevel},</if>
+            <if test="areaId != null">area_id = #{areaId},</if>
+            update_time = NOW()
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteById">
+        UPDATE substation SET deleted = 1, update_time = NOW() WHERE id = #{id}
+    </update>
+</mapper>

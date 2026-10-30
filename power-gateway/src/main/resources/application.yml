@@ -1,0 +1,101 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: power-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: 0
+      timeout: 3s
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        file-extension: yaml
+        # 网关本地也保留一份路由，Nacos 未启动时便于单独调试网关
+        import-check:
+          enabled: false
+    gateway:
+      # 统一 CORS：跨域只在网关处理，业务服务不再各自配置，避免出现
+      # "预检请求 200 但响应头重复/缺失" 这类问题
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: "*"
+            allowed-methods: "*"
+            allowed-headers: "*"
+            allow-credentials: true
+            max-age: 3600
+      routes:
+        - id: auth-service
+          uri: lb://power-auth
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            # 限流只挂在登录这一个路由上。
+            # 之前写在 default-filters 里，等于给所有路由都套了一层
+            # （每 5 秒 10 次），正常翻页、看曲线都会莫名其妙 429。
+            # 需要防的只是撞库，不是正常业务流量。
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+        - id: device-service
+          uri: lb://power-device
+          predicates:
+            # /api/operations/summary 是设备域的聚合统计：一条 SQL 顶掉原来 3 次 Feign 串行调用
+            - Path=/api/power-area/**,/api/substation/**,/api/equipment/**,/api/meter/**,/api/operations/**
+        - id: billing-service
+          uri: lb://power-billing
+          predicates:
+            # /api/usage/** 是日用电量表（electricity_daily_usage）的读写口，客户自助与首页曲线都用它
+            - Path=/api/customer/**,/api/bill/**,/api/price/**,/api/usage/**
+        - id: alert-service
+          uri: lb://power-alert
+          predicates:
+            - Path=/api/maintenance/**,/api/staff/**,/api/dashboard/**,/api/alert/**
+        # WebSocket 告警通道：/ws/alert 直连 power-alert 的 @ServerEndpoint。
+        # 握手不走 JWT 过滤器（浏览器无法自定义头），改由端点用 ?token= 校验。
+        - id: alert-ws
+          uri: lb://power-alert
+          predicates:
+            - Path=/ws/**
+          metadata:
+            # 让网关为该路由维持长连接，避免被默认的响应超时切断
+            response-timeout: -1
+      default-filters:
+        # 限流已下放到 auth-service 路由上，这里不再设全局默认。
+        # 全局限流的代价是：任何一次正常的列表翻页、曲线切换都会被计入配额。
+        - name: DedupeResponseHeader
+          args:
+            name: Access-Control-Allow-Origin Access-Control-Allow-Credentials
+            strategy: RETAIN_UNIQUE
+
+# JWT 配置：网关与各业务服务必须使用同一个 secret，否则网关校验通过、服务端解析失败
+power:
+  jwt:
+    secret: ${JWT_SECRET:power-management-jwt-secret-key-2026-please-change-in-prod}
+    expire-minutes: 1440
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.power.gateway: INFO
+    org.springframework.cloud.gateway: INFO

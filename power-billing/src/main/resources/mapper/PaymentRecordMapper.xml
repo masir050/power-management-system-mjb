@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.power.billing.mapper.PaymentRecordMapper">
+
+    <insert id="insertPayment" parameterType="com.power.billing.pojo.PaymentRecord"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO payment_record
+            (bill_id, customer_id, amount, payment_method, payment_no,
+             payer_type, operator_id, pay_time, create_time, deleted)
+        VALUES
+            (#{billId}, #{customerId}, #{amount}, #{paymentMethod}, #{paymentNo},
+             #{payerType}, #{operatorId}, #{payTime}, #{payTime}, 0)
+    </insert>
+
+    <select id="selectByBillId" resultType="com.power.billing.pojo.PaymentRecord">
+        SELECT id, bill_id, customer_id, amount, payment_method, payment_no,
+               payer_type, operator_id, pay_time, create_time, deleted
+        FROM payment_record
+        WHERE bill_id = #{billId} AND deleted = 0
+        ORDER BY pay_time DESC, id DESC
+    </select>
+
+    <select id="selectRecentByCustomer" resultType="com.power.billing.pojo.PaymentRecord">
+        SELECT id, bill_id, customer_id, amount, payment_method, payment_no,
+               payer_type, operator_id, pay_time, create_time, deleted
+        FROM payment_record
+        WHERE customer_id = #{customerId} AND deleted = 0
+        ORDER BY pay_time DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

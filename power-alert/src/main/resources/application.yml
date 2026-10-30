@@ -1,0 +1,101 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: power-alert
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 只连 alert 自己的库；设备/账单数据一律走 Feign，不做跨库 JOIN
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/power_alert?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 3
+      connection-timeout: 3000
+
+  # ===== RabbitMQ：告警事件异步化 =====
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: ${RABBITMQ_VHOST:/}
+    # 发布确认：本地消息表投递依赖它判断"broker 是否真的收下了"
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        # 并发消费数：告警推送是轻量转发，少量并发足够
+        concurrency: 2
+        max-concurrency: 8
+        # 自动 ack：方法正常返回即确认，抛异常则不确认并按 retry 策略重试。
+        # 之所以不选手动 ack：手动模式下代码里必须显式调用 basicAck/basicNack，
+        # 一旦遗漏（本例的消费者就没有），消息会在处理完后迟迟不被确认，
+        # 最终超时后重新入队、被无限重投——比自动 ack 危险得多。
+        acknowledge-mode: auto
+        # 失败重试：抛异常后重试 3 次（1s、2s、4s），仍失败则进死信队列
+        retry:
+          enabled: true
+          initial-interval: 1000ms
+          multiplier: 2
+          max-attempts: 3
+          max-interval: 10000ms
+        # 重试耗尽后不重新入队，交由死信交换机收走（否则会形成无限重投循环）
+        default-requeue-rejected: false
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        file-extension: yaml
+        import-check:
+          enabled: false
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  # Mapper XML 里使用简名（resultType="MaintenanceRecord"），需注册包扫描才能解析。
+  # 漏了这行启动即抛 "Could not resolve type alias"，但编译期不报错。
+  type-aliases-package: com.power.alert.pojo
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL；生产改为 org.apache.ibatis.logging.nologging.NoLoggingImpl
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+power:
+  jwt:
+    secret: ${JWT_SECRET:power-management-jwt-secret-key-2026-please-change-in-prod}
+    expire-minutes: 1440
+  alert:
+    # 本地消息表补偿任务的扫描间隔（毫秒）
+    dispatch-interval-ms: 5000
+  ws:
+    # WebSocket 握手是否强制校验 ?token=。
+    # 默认 true：通道与其它接口使用同一套 JWT，不因为"浏览器带不了请求头"就放开。
+    # 单机手工调通道时可用 WS_AUTH_REQUIRED=false 临时关闭。
+    auth-required: ${WS_AUTH_REQUIRED:true}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.power.alert: DEBUG
