@@ -18,9 +18,9 @@ ragRequest.interceptors.request.use(config => {
   return config
 })
 
-/** 单轮规程问答：返回 { answer, sources } */
-export function askRag(q) {
-  return ragRequest.get('/ask', { params: { q } }).then(res => res.data)
+/** 单轮规程问答：role 决定回答人设（CUSTOMER/OPERATOR/ADMIN），返回 { answer, sources } */
+export function askRag(q, role) {
+  return ragRequest.get('/ask', { params: { q, role } }).then(res => res.data)
 }
 
 /** 告警研判：返回 { answer, steps, trace } */

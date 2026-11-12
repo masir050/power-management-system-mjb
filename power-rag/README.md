@@ -8,7 +8,7 @@
 
 ## 1 这是什么
 
-- **离线灌库**（跑一次）：15 份规程 md → 按小节切块（约 180 块）→ bge-m3 向量化 → pgvector `vector_store` 表。
+- **离线灌库**（跑一次）：18 份文档 md（15 份规程 + 3 份用户服务文档）→ 按小节切块（216 块）→ bge-m3 向量化 → pgvector `vector_store` 表。
 - **在线问答**（每次请求）：`/ask` 单轮 RAG；`/agent` 多工具研判（台账 + 规程）；`/diagnose` 告警研判（加拓扑，最多 6 步工具，逐步 trace）；`/chat/stream` SSE 流式 + 会话记忆。
 - 检索固定链路：向量 top10 + BM25 top10 → RRF(k=60) 融合 → bge-reranker-v2-m3 精排 → 重排分 < 0.5 直接拒答（不调大模型）。
 - **前端入口**：登录后任意页面右下角的「电力规程助手」角标，走网关 `/api/rag/**`（StripPrefix=2 转发，鉴权仍由网关 JWT 统一做）。
@@ -30,7 +30,7 @@ docker run -d --name neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/<你的
 
 数据初始化（三步，缺一个链路就不全）：
 
-1. 向量库：服务启动后 `curl -X POST http://localhost:8088/ingest`（把 `data/docs/` 15 份 md 切块灌入，灌完 `vector_store` 应为 180 行）；
+1. 向量库：服务启动后 `curl -X POST http://localhost:8088/ingest`（把 `data/docs/` 18 份 md 切块灌入，灌完 `vector_store` 应为 216 行）；
 2. Neo4j 拓扑：按 `docs/cypher.md` 里的语句建设备节点与 FEEDS 供电关系；
 3. MySQL 台账：`power_device`（设备/变电站/电表）与 `power_alert`（告警/检修）的建库与初始数据见仓库根 README。
 
@@ -40,14 +40,14 @@ docker run -d --name neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/<你的
 
 | 接口 | 参数 | 说明 |
 | --- | --- | --- |
-| GET /ask | q | 单轮 RAG 问答（带答案缓存，TTL 30min） |
+| GET /ask | q · role | 单轮 RAG 问答（带答案缓存，TTL 30min）。role=CUSTOMER/OPERATOR/ADMIN 决定回答人设：用户档说人话讲怎么办，运维档给规程条款（默认），管理档讲流程与责任时限；缓存按角色隔离 |
 | GET /agent | q | 多工具研判：台账 + 告警 + 检修 + 规程检索，返回 trace |
 | GET /diagnose | alarm | 告警研判：加 Neo4j 拓扑，工具上限 6 步 |
 | GET /chat/stream · /chat/mem | q · (sid, q) | SSE 流式；/chat/mem 带会话记忆 |
 | GET /ask-fb | q | 主模型失败自动切备胎的演示 |
 | GET /stats · /stats/reset | — | 缓存命中 / token 统计；重置 |
 | GET /eval?mode=rrf-rerank | — | 跑 100 题评测（检索 + 拒答） |
-| GET /search · /ask2 | question | 调试台：只看检索结果 / 换参数问答 |
+| GET /search · /ask2 | question · (topK, role) | 调试台：只看检索结果 / 换参数问答，role 语义同 /ask |
 | POST /ingest | — | 重新灌库 |
 
 三个真实例子（输出均为 2026-11-11 实跑原文，未删改；Windows 下请在 Git Bash / WSL 里执行——cmd 的 curl 对中文参数按 GBK 编码，服务端会收到乱码）：
@@ -96,7 +96,7 @@ curl "http://localhost:8088/diagnose?alarm=天鹰刀断路器 SF6 压力低告�
 
 ## 6 已知限制
 
-- 语料是 15 份自写模拟规程（约 180 块），结构与真实规程相近，但覆盖面远小于真实资料库；台账 6 台设备、告警 7 条，均为演示数据。
+- 语料是 18 份自写模拟文档（216 块）：15 份运维规程 + 3 份用户服务文档（停电复电/电费缴费/安全用电报修），结构与真实规程相近，但覆盖面远小于真实资料库；台账 6 台设备、告警 7 条，均为演示数据。
 - 拒答阈值 0.5 余量很薄：正例最低 0.516 / 否定最高 0.470，窗口仅 0.046——换 reranker 或换语料必须重跑标定。
 - Neo4j 拓扑只支持上下游两跳，且「谁给谁供电」是手工造的关系，不是从台账推导的。
 - token 统计只覆盖非流式接口（/ask、/ask-fb）；/chat/stream 的 usage 在流末帧，未聚合。

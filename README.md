@@ -159,7 +159,7 @@ taskkill /F /PID <PID>
 ### 3.6 首次使用规程问答（只需一次）
 
 ```bash
-curl -X POST http://localhost:8088/ingest    # 15 份规程 md → 180 个向量块
+curl -X POST http://localhost:8088/ingest    # 18 份文档 md → 216 个向量块
 ```
 
 Neo4j 的设备节点与 FEEDS 供电关系按 `power-rag/docs/cypher.md` 里的语句建。建完 `curl http://localhost:8088/stats` 应看到 `blocks: 75`，然后登录系统、点右下角「电力规程助手」角标即可对话。

@@ -2,6 +2,7 @@ package com.power.rag.controller;
 
 import jakarta.servlet.http.HttpServletResponse;
 import com.power.rag.retrieval.HybridRetriever;
+import com.power.rag.service.RolePrompts;
 import com.power.rag.service.Stats;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
@@ -88,11 +89,13 @@ public class DebugController {
         return Map.of("count", rows.size(), "hits", rows);
     }
 
-    /** 问答（带出处）：融合 + 重排，重排分低于阈值就直接拒答，不浪费大模型调用 */
+    /** 问答（带出处）：融合 + 重排，重排分低于阈值就直接拒答，不浪费大模型调用。role 语义同 /ask */
     @GetMapping("/ask2")
     public Map<String, Object> ask2(@RequestParam String question,
-                                    @RequestParam(defaultValue = "5") int topK) {
+                                    @RequestParam(defaultValue = "5") int topK,
+                                    @RequestParam(required = false) String role) {
         HybridRetriever.Result r = hybrid.retrieve(question, topK);
+        String sys = RolePrompts.of(role);
 
         // 重排分是「这段资料能不能回答这个问题」的模型判断，低于阈值说明库里确实没有，
         // 这时候调大模型只会让它硬编，直接返回固定话术更安全
@@ -111,14 +114,7 @@ public class DebugController {
                .append(ch.text()).append("\n\n");
         }
         String answer = chatClient.prompt()
-                .system("""
-                        你是电力运维助手。严格按下面规则回答：
-                        1. 只能依据【资料】中的内容回答，不得使用资料以外的知识。
-                        2. 资料里没写到的问题，直接说"这条规程里没写到"，不要推测、不要凑答案。
-                        3. 分点用"- "或"1. "，关键数值用**加粗**；不要写#标题、不要画表格、
-                           不要用---分隔线，回答是放在聊天框里看的。
-                        4. 回答末尾用"出处：资料N"标注依据，N 是资料编号。
-                        """)
+                .system(sys)
                 .user("【资料】\n" + ctx + "\n【问题】" + question)
                 .call()
                 .content();

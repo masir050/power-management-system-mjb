@@ -19,7 +19,15 @@
 
         <div class="rag-modes">
           <button :class="['rag-mode', { on: mode === 'ask' }]" @click="switchMode('ask')">规程问答</button>
-          <button :class="['rag-mode', { on: mode === 'diagnose' }]" @click="switchMode('diagnose')">告警研判</button>
+          <!-- 告警研判是运维功能，用电用户不显示这个入口 -->
+          <button v-if="viewerRole !== 'CUSTOMER'" :class="['rag-mode', { on: mode === 'diagnose' }]"
+                  @click="switchMode('diagnose')">告警研判</button>
+        </div>
+
+        <div class="rag-roles">
+          <span class="rag-roles-t">提问身份</span>
+          <span class="rag-role on">{{ roleLabel }}</span>
+          <span class="rag-roles-note">跟随登录账号，不可切换</span>
         </div>
 
         <div ref="scroller" class="rag-body">
@@ -77,7 +85,7 @@
           <input
             v-model="text"
             class="rag-input"
-            :placeholder="mode === 'ask' ? '问一条规程问题，回车发送' : '粘贴一条告警文本，回车研判'"
+            :placeholder="inputHint"
             :disabled="loading"
             @keyup.enter="send()"
           />
@@ -104,6 +112,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { askRag, diagnoseAlarm, ragStats } from '../api/rag'
 import { renderMarkdown } from '../utils/markdown'
+import { useUserStore } from '../stores/user'
 
 const open = ref(false)
 const mode = ref('ask')
@@ -115,40 +124,87 @@ const showPresets = ref(false)
 const scroller = ref(null)
 const meta = ref(null)   // { docs, blocks }，取自 /stats，失败则用兜底文案
 
+// 提问身份：只跟随登录角色，面板里不提供切换（谁登录就是谁的口吻）
+const ROLES = [
+  { id: 'OPERATOR', label: '运维人员' },
+  { id: 'ADMIN', label: '管理员' },
+  { id: 'CUSTOMER', label: '用电用户' }
+]
+const userStore = useUserStore()
+const viewerRole = computed(() =>
+  ROLES.some(r => r.id === userStore.role) ? userStore.role : 'OPERATOR'
+)
+const roleLabel = computed(() => ROLES.find(r => r.id === viewerRole.value)?.label || '运维人员')
+
 const subtitle = computed(() =>
   meta.value?.blocks
     ? `${meta.value.docs} 份规程 · ${meta.value.blocks} 个知识块`
     : '规程问答 · 向量 + BM25 双路召回'
 )
 
+const inputHint = computed(() =>
+  mode.value === 'diagnose'
+    ? '粘贴一条告警文本，回车研判'
+    : viewerRole.value === 'CUSTOMER'
+      ? '电费、停电、报修都能问，回车发送'
+      : '问一条规程问题，回车发送'
+)
+
 const PRESETS = {
-  ask: [
+  OPERATOR: [
     '油温到多少度算危急缺陷',
     '断路器多久小修一次',
     '96℃ 且冷却器全停 25 分钟怎么办'
+  ],
+  ADMIN: [
+    '主变过温告警的处置流程和时限',
+    '故障抢修各环节谁负责',
+    '检修计划的审批环节有哪些'
+  ],
+  CUSTOMER: [
+    '电费是怎么算出来的',
+    '家里停电了怎么报修',
+    '总开关老跳闸怎么办'
   ],
   diagnose: [
     '圣火令主变压器顶层油温 92 度，超过告警值，如何处理',
     '天鹰刀断路器 SF6 压力低告警，气压降至 0.35MPa'
   ]
 }
-const presets = ref(PRESETS.ask)
+const presets = computed(() =>
+  mode.value === 'diagnose' ? PRESETS.diagnose : PRESETS[viewerRole.value]
+)
 
-/** 开场白：交代"我是谁、能干什么、边界在哪"，不用"未规定"这类公文话术 */
+/** 开场白按身份分三套：交代"我是谁、按谁的口吻答、边界在哪" */
 function greeting() {
   const n = meta.value?.docs
-  if (mode.value === 'ask') {
+  if (mode.value === 'diagnose') {
     return [
-      n
-        ? `你好，值班辛苦了。这 ${n} 份规程我都翻过了——变压器、断路器、母线、二次回路，还有检修验收和告警处置。想问什么直接说，不用咬文嚼字。`
-        : '你好，值班辛苦了。变压器、断路器、母线、二次回路，还有检修验收和告警处置这些规程，我都翻过了。想问什么直接说，不用咬文嚼字。',
-      '我只按规程答，不替你想当然。碰上规程没覆盖到的，我会直说，再告诉你该往哪类文件里找。'
+      '贴一条告警给我就行，原文最好——设备名、告警类型、数值，有什么贴什么。',
+      '我会去查设备台账和最近的告警记录，再顺着供电关系看会影响哪些地方，最后给你处置顺序。'
     ]
   }
-  return [
-    '贴一条告警给我就行，原文最好——设备名、告警类型、数值，有什么贴什么。',
-    '我会去查设备台账和最近的告警记录，再顺着供电关系看会影响哪些地方，最后给你处置顺序。'
-  ]
+  switch (viewerRole.value) {
+    case 'CUSTOMER':
+      return [
+        '您好！用电上的事都能问我：电费怎么算、停电了怎么办、家里跳闸怎么查，我先说结论，再告诉您具体怎么办。',
+        '我只能答这些资料里写到的内容，答不了的我直说，告诉您去哪个渠道办。'
+      ]
+    case 'ADMIN':
+      return [
+        n
+          ? `您好。这 ${n} 份资料我都过了一遍，规程和业务口径都在里面。`
+          : '您好。规程和业务口径的资料我都过了一遍。',
+        '您问处置流程、责任分工、时限要求这类问题，我按流程顺序答；规程没覆盖到的我会直说，再指个方向。'
+      ]
+    default:
+      return [
+        n
+          ? `你好，值班辛苦了。这 ${n} 份规程我都翻过了——变压器、断路器、母线、二次回路，还有检修验收和告警处置。想问什么直接说，不用咬文嚼字。`
+          : '你好，值班辛苦了。变压器、断路器、母线、二次回路，还有检修验收和告警处置这些规程，我都翻过了。想问什么直接说，不用咬文嚼字。',
+        '我只按规程答，不替你想当然。碰上规程没覆盖到的，我会直说，再告诉你该往哪类文件里找。'
+      ]
+  }
 }
 
 function greet() {
@@ -177,9 +233,16 @@ watch(open, v => {
 function switchMode(m) {
   if (mode.value === m) return
   mode.value = m
-  presets.value = PRESETS[m]
   greet()
 }
+
+/** 登录角色变了（重新登录/换号）＝换一套人设，开新会话最干净 */
+watch(viewerRole, id => {
+  if (id === 'CUSTOMER' && mode.value === 'diagnose') {
+    mode.value = 'ask'
+  }
+  greet()
+})
 
 function toBottom() {
   nextTick(() => {
@@ -205,7 +268,7 @@ async function send(preset) {
 
   try {
     if (mode.value === 'ask') {
-      const data = await askRag(q)
+      const data = await askRag(q, viewerRole.value)
       push({ role: 'bot', text: data.answer || '（没有返回内容）', sources: data.sources || [] })
     } else {
       const data = await diagnoseAlarm(q)
@@ -359,6 +422,27 @@ async function send(preset) {
   background: var(--gold-tint);
   border-color: var(--gold-line);
 }
+
+/* 提问身份：只读展示，跟随登录角色 */
+.rag-roles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 8px;
+  flex-shrink: 0;
+}
+.rag-roles-t { font-size: 10.5px; color: var(--text-faint); margin-right: 2px; }
+.rag-role {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-line);
+  background: var(--gold-tint);
+  color: var(--gold);
+  font-size: 11px;
+  line-height: 22px;
+}
+.rag-roles-note { font-size: 10.5px; color: var(--text-faint); margin-left: auto; }
 
 /* ---------- 消息区 ---------- */
 .rag-body {

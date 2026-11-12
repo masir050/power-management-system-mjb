@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 680 576" role="img" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
 <title>电力故障研判助手架构图</title>
-<desc>两条独立链路：离线把 15 份规程切块向量化入 pgvector；在线由四个入口经 ChatClient 编排，调用检索层与工具层，读写四类存储，并由两家模型提供服务。</desc>
+<desc>两条独立链路：离线把 18 份文档切块向量化入 pgvector；在线由四个入口经 ChatClient 编排，调用检索层与工具层，读写四类存储，并由两家模型提供服务。</desc>
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
     <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -11,12 +11,12 @@
 <text x="56" y="62" font-size="12" font-weight="500" fill="#444441">离线灌库 · 上线前跑一次</text>
 
 <rect x="56" y="72" width="124" height="52" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
-<text x="118" y="94" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">15 份规程 md</text>
+<text x="118" y="94" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">18 份文档 md</text>
 <text x="118" y="112" font-size="11" fill="#5F5E5A" text-anchor="middle">data/docs</text>
 
 <rect x="204" y="72" width="124" height="52" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
 <text x="266" y="94" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">按小节切块</text>
-<text x="266" y="112" font-size="11" fill="#5F5E5A" text-anchor="middle">180 块 · 每份 12 节</text>
+<text x="266" y="112" font-size="11" fill="#5F5E5A" text-anchor="middle">216 块 · 每份 12 节</text>
 
 <rect x="352" y="72" width="124" height="52" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
 <text x="414" y="94" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">bge-m3 向量化</text>
@@ -69,7 +69,7 @@
 
 <rect x="200" y="412" width="130" height="52" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
 <text x="265" y="434" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">PostgreSQL</text>
-<text x="265" y="451" font-size="11" fill="#5F5E5A" text-anchor="middle">pgvector 180 块</text>
+<text x="265" y="451" font-size="11" fill="#5F5E5A" text-anchor="middle">pgvector 216 块</text>
 
 <rect x="344" y="412" width="130" height="52" rx="8" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="0.5"/>
 <text x="409" y="434" font-size="12" font-weight="500" fill="#2C2C2A" text-anchor="middle">Neo4j</text>
