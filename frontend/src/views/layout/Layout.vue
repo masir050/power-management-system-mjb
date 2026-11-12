@@ -89,6 +89,9 @@
         </router-view>
       </main>
     </div>
+
+    <!-- 规程问答角标：固定右下角，任何页面都能用；面板自己处理 loading / 401 / 服务未启动 -->
+    <RagAssistant />
   </div>
 </template>
 
@@ -97,6 +100,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../../stores/user'
 import { startAlertSocket, stopAlertSocket } from '../../utils/alertSocket'
+import RagAssistant from '../../components/RagAssistant.vue'
 import {
   Odometer, Location, Connection, Monitor, User, DataBoard, Document,
   Coin, Tools, Avatar, ArrowDown, SwitchButton, Bell, TrendCharts, Wallet

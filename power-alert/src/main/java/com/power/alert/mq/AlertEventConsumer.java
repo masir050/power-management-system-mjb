@@ -4,10 +4,6 @@ import com.power.alert.ws.AlertWebSocketEndpoint;
 import com.power.common.mq.AlertEvent;
 import com.power.common.mq.AlertMqConstants;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.core.ExchangeTypes;
-import org.springframework.amqp.rabbit.annotation.Exchange;
-import org.springframework.amqp.rabbit.annotation.Queue;
-import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
@@ -44,14 +40,10 @@ public class AlertEventConsumer {
     /** messageId -> 处理时间。用 ConcurrentHashMap，消费线程池是多线程的 */
     private final Map<String, Long> processedMessages = new ConcurrentHashMap<>();
 
-    @RabbitListener(
-            bindings = @QueueBinding(
-                    value = @Queue(name = AlertMqConstants.ALERT_QUEUE, durable = "true"),
-                    exchange = @Exchange(name = AlertMqConstants.ALERT_EXCHANGE, type = ExchangeTypes.TOPIC),
-                    // *.created 与 *.resolved 都收，用通配符避免新增事件类型时改代码
-                    key = "alert.*"
-            )
-    )
+    // 拓扑与绑定由 AlertMqConfig 统一声明（那里带了死信参数）。
+    // 这里若再用 @QueueBinding 声明同名队列，参数与 Config 不一致会让 broker 抛
+    // 406 PRECONDITION_FAILED，监听器起不来，所以只引用队列名。
+    @RabbitListener(queues = AlertMqConstants.ALERT_QUEUE)
     public void onAlertEvent(AlertEvent event) {
         if (event == null || event.getMessageId() == null) {
             // 空消息体通常是序列化失败，重投也没用，直接丢弃（不抛异常即视为 ack）

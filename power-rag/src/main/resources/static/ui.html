@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG 调试台 · power-rag</title>
+<style>
+  :root{
+    --bg:#f6f6f4; --card:#fff; --line:#e4e2dc; --txt:#1f1f1d; --sub:#6b6a65;
+    --red:#c0392b; --green:#2e7d4f; --amber:#b5731a; --blue:#2b6cb0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt)}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px}
+  header h1{font-size:15px;font-weight:600;margin:0}
+  header .status{font-size:12px;color:var(--sub);margin-left:auto}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#bbb;margin-right:5px;vertical-align:middle}
+  .dot.ok{background:var(--green)} .dot.bad{background:var(--red)}
+  main{max-width:1120px;margin:0 auto;padding:20px 24px 60px}
+  .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+  .tab{padding:9px 16px;cursor:pointer;border:none;background:none;font:inherit;color:var(--sub);border-bottom:2px solid transparent}
+  .tab.on{color:var(--txt);border-bottom-color:var(--txt);font-weight:500}
+  .panel{display:none} .panel.on{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .row{display:flex;gap:8px;align-items:center}
+  input[type=text],input[type=number],select,textarea{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--txt);width:100%}
+  input[type=text]:focus,textarea:focus,select:focus{outline:none;border-color:#9aa7b4}
+  textarea{resize:vertical;min-height:44px}
+  button{font:inherit;padding:9px 18px;border-radius:7px;border:1px solid var(--txt);background:var(--txt);color:#fff;cursor:pointer;white-space:nowrap}
+  button:hover{opacity:.86} button:disabled{opacity:.45;cursor:default}
+  button.ghost{background:#fff;color:var(--txt);border-color:var(--line)}
+  .label{font-size:12px;color:var(--sub);margin-bottom:5px;display:block}
+  .hit{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:9px;background:#fbfbfa}
+  .hit .h{display:flex;gap:10px;align-items:baseline;margin-bottom:6px}
+  .hit .src{font-weight:600}
+  .hit .score{font-family:ui-monospace,Consolas,monospace;font-size:12px;padding:1px 7px;border-radius:20px;background:#eee}
+  .score.hi{background:#e3f2e9;color:var(--green)} .score.mid{background:#fdf2e0;color:var(--amber)} .score.lo{background:#fbe9e7;color:var(--red)}
+  .hit .txt{color:#33322f;white-space:pre-wrap;font-size:13px;max-height:170px;overflow:auto}
+  .answer{white-space:pre-wrap;line-height:1.75}
+  .srcs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .chip{font-size:12px;padding:2px 9px;border-radius:20px;background:#eef2f7;color:var(--blue)}
+  .msg{font-size:13px;padding:9px 12px;border-radius:7px;margin-top:10px}
+  .msg.ok{background:#e9f5ee;color:var(--green)} .msg.err{background:#fbeae8;color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--sub);font-weight:500;font-size:12px}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .kpi .box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  .kpi .v{font-size:22px;font-weight:600;line-height:1.2}
+  .kpi .k{font-size:12px;color:var(--sub)}
+  .empty{color:var(--sub);font-size:13px;padding:18px 0;text-align:center}
+  .hint{font-size:12px;color:var(--sub);margin-top:8px}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:820px){.split,.kpi{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>RAG 调试台</h1>
+  <span class="status"><span class="dot" id="dot"></span><span id="statustxt">未连接</span></span>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab on" data-p="search">检索预览</button>
+    <button class="tab" data-p="ask">问答</button>
+    <button class="tab" data-p="tool">工具调用 /tool-chat</button>
+    <button class="tab" data-p="eval">评测 /eval</button>
+    <button class="tab" data-p="add">出题</button>
+  </div>
+
+  <!-- 检索预览 -->
+  <section class="panel on" id="p-search">
+    <div class="card">
+      <div class="row">
+        <input type="text" id="q1" placeholder="输入问题，例如：主变油温超过多少度要告警" autocomplete="off">
+        <select id="k1" style="width:110px">
+          <option value="3">Top-3</option>
+          <option value="5" selected>Top-5</option>
+          <option value="10">Top-10</option>
+        </select>
+        <button id="b1">检索</button>
+      </div>
+      <div class="hint">只检索不调模型，秒出。看分数判断语料区分度：>0.6 很相关，0.5~0.6 边缘，<0.5 基本无关。</div>
+    </div>
+    <div id="r1"></div>
+  </section>
+
+  <!-- 问答 -->
+  <section class="panel" id="p-ask">
+    <div class="card">
+      <div class="row">
+        <input type="text" id="q2" placeholder="输入问题，例如：2 号主变油温 92 度了咋办" autocomplete="off">
+        <select id="k2" style="width:110px">
+          <option value="3">Top-3</option>
+          <option value="5" selected>Top-5</option>
+        </select>
+        <button id="b2">提问</button>
+      </div>
+      <div class="hint">检索走「向量+BM25 融合 → 重排」。重排分低于 0.5 直接拒答，连大模型都不调；否则约 3~8 秒出答案。</div>
+    </div>
+    <div id="r2"></div>
+  </section>
+
+  <!-- 工具调用 -->
+  <section class="panel" id="p-tool">
+    <div class="card">
+      <div class="row">
+        <input type="text" id="q5" placeholder="问设备台账，例如：1号主变的型号是什么，哪年投运的" autocomplete="off">
+        <button id="b5">提问</button>
+      </div>
+      <div class="hint">这一档不查文档，模型自己从三个工具里挑：<b>queryDevice</b>（台账）、<b>queryAlarms</b>（告警）、<b>queryMaintenance</b>（检修记录）。查的是 MySQL 的 <b>power_device</b> 和 <b>power_alert</b> 两个库的真数据，不是上面 pgvector。调一次工具约 2.5~3.5 秒，一句话问两件事会连调两个工具。试试：<code>圣火令主变压器额定参数是什么，最近有什么告警</code></div>
+    </div>
+    <div id="r5"></div>
+  </section>
+
+  <!-- 评测 -->
+  <section class="panel" id="p-eval">
+    <div class="card">
+      <div class="row">
+        <select id="m3" style="width:215px">
+          <option value="vector" selected>向量检索（默认）</option>
+          <option value="bm25">关键词 BM25（对照）</option>
+          <option value="rrf">融合 RRF（两路各取 10）</option>
+          <option value="rrf-rerank">融合 + 重排（RRF→bge-reranker）</option>
+        </select>
+        <button id="b3">跑一遍 28 题评测</button>
+        <span class="hint" style="margin:0">读 data/eval/questions.csv，只算检索命中，不调模型。</span>
+      </div>
+      <div class="hint" id="m3tip">四档里只有向量能判拒答：向量分 0~1 有绝对含义；BM25 是加权和；RRF 与重排都只剩相对名次。后三档只判命中。</div>
+    </div>
+    <div id="r3"></div>
+  </section>
+
+  <!-- 出题 -->
+  <section class="panel" id="p-add">
+    <div class="card">
+      <span class="label">问题（凭「现场用户会怎么问」写，不要照着 md 抄）</span>
+      <textarea id="fq" placeholder="例如：2 号主变油温 92 度了咋办"></textarea>
+      <div class="split" style="margin-top:12px">
+        <div>
+          <span class="label">期望出处（文件名，不带 .md；库里没有的填 NONE）</span>
+          <input type="text" id="fe" list="srclist" placeholder="主变过温告警处置">
+          <datalist id="srclist"></datalist>
+        </div>
+        <div>
+          <span class="label">类型</span>
+          <select id="ft">
+            <option value="直答">直答（关键词高度重合）</option>
+            <option value="跨段">跨段（要拼两段才能答）</option>
+            <option value="否定">否定（库里根本没有）</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="b4">追加到 questions.csv</button>
+        <span class="hint" style="margin:0" id="fmsg"></span>
+      </div>
+      <div class="hint">追加后立刻点「评测」就能看到这道题的结果，这是最快的「出题—验证」循环。</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const SOURCES = ["主变过温告警处置","事故应急预案","变压器运行规程","开关跳闸分析导则","故障录波分析导则","断路器检修导则","电力安全工作规程","直流系统运维规程","站用电系统规程","绝缘降低原因与处理","继电保护定值管理","表计故障处理规程","设备过热分级处置","避雷器预防性试验","隔离开关运维规程"];
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("on"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("on"));
+  t.classList.add("on");
+  $("#p-" + t.dataset.p).classList.add("on");
+});
+
+function scoreClass(s){
+  const n = parseFloat(s);
+  if (isNaN(n)) return "";
+  return n >= 0.6 ? "hi" : n >= 0.5 ? "mid" : "lo";
+}
+function esc(s){ return String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+async function get(url){
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0,200));
+  return r.json();
+}
+
+// 连通性
+(async () => {
+  try {
+    await get("/search?question=测试&topK=1");
+    $("#dot").className = "dot ok";
+    let extra = "";
+    try {
+      const st = await get("/stats");
+      extra = " · 库中 " + st.blocks + " 块 / " + st.sources.length + " 个文件";
+    } catch (e) { extra = " · 统计读取失败"; }
+    $("#statustxt").textContent = "服务已连接 · " + (location.port || "80") + extra;
+  } catch(e) {
+    $("#dot").className = "dot bad";
+    $("#statustxt").textContent = "连接失败：" + e.message.slice(0,60);
+  }
+})();
+
+// 检索
+$("#b1").onclick = async () => {
+  const q = $("#q1").value.trim(); if (!q) return;
+  const btn = $("#b1"); btn.disabled = true; $("#r1").innerHTML = '<div class="card empty">检索中…</div>';
+  try {
+    const d = await get(`/search?question=${encodeURIComponent(q)}&topK=${$("#k1").value}`);
+    if (!d.hits.length) { $("#r1").innerHTML = '<div class="card empty">没有命中任何块</div>'; return; }
+    $("#r1").innerHTML = d.hits.map((h,i) => `
+      <div class="hit">
+        <div class="h"><span class="src">${i+1}. ${esc(h.source)}</span>
+          <span class="score ${scoreClass(h.score)}">${esc(h.score ?? "-")}</span></div>
+        <div class="txt">${esc(h.text)}</div>
+      </div>`).join("");
+  } catch(e) { $("#r1").innerHTML = `<div class="card msg err">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; }
+};
+$("#q1").addEventListener("keydown", e => { if (e.key === "Enter") $("#b1").click(); });
+
+// 问答
+$("#b2").onclick = async () => {
+  const q = $("#q2").value.trim(); if (!q) return;
+  const btn = $("#b2"); btn.disabled = true; $("#r2").innerHTML = '<div class="card empty">检索 + 生成中…</div>';
+  try {
+    const d = await get(`/ask2?question=${encodeURIComponent(q)}&topK=${$("#k2").value}`);
+    const gate = d.rejected
+      ? `<span class="chip" style="background:#fdecea;color:#c0392b">已拒答 · 重排分 ${esc(d.topScore)} &lt; 0.5</span>`
+      : `<span class="chip" style="background:#eaf5ee;color:#2e7d4f">重排分 ${esc(d.topScore)}</span>`;
+    $("#r2").innerHTML = `<div class="card">
+        <div class="answer">${esc(d.answer)}</div>
+        <div class="srcs">${gate}${(d.sources||[]).map(s => `<span class="chip">${esc(s)}</span>`).join("")}</div>
+      </div>`;
+  } catch(e) { $("#r2").innerHTML = `<div class="card msg err">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; }
+};
+$("#q2").addEventListener("keydown", e => { if (e.key === "Enter") $("#b2").click(); });
+
+// 工具调用
+$("#b5").onclick = async () => {
+  const q = $("#q5").value.trim(); if (!q) return;
+  const btn = $("#b5"); btn.disabled = true; $("#r5").innerHTML = '<div class="card empty">模型判断要不要调工具…</div>';
+  try {
+    // 这个接口直接返回纯文本，不是 JSON，所以不能复用 get()
+    const r = await fetch(`/tool-chat?q=${encodeURIComponent(q)}`);
+    if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+    $("#r5").innerHTML = `<div class="card"><div class="answer">${esc(await r.text())}</div></div>`;
+  } catch(e) { $("#r5").innerHTML = `<div class="card msg err">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; }
+};
+$("#q5").addEventListener("keydown", e => { if (e.key === "Enter") $("#b5").click(); });
+
+// 评测
+$("#b3").onclick = async () => {
+  const btn = $("#b3"); btn.disabled = true; $("#r3").innerHTML = '<div class="card empty">评测中…</div>';
+  try {
+    const mode = $("#m3").value;
+    const d = await get("/eval?mode=" + mode);
+    const isVec = mode === "vector";
+    const isRrf = mode === "rrf";
+    const isRerank = mode === "rrf-rerank";
+    if (!d["总数"]) { $("#r3").innerHTML = '<div class="card empty">还没有题目，先去「出题」页加几道</div>'; return; }
+    const rows = (d["明细"]||[]).map(r => `
+      <tr>
+        <td>${esc(r["问题"])}</td>
+        <td>${esc(r["类型"])}</td>
+        <td>${esc(r["期望"])}</td>
+        <td class="mono">${esc(r["top1score"])}</td>
+        <td>${esc((r["top3"]||[]).join(" / "))}</td>
+        <td style="color:${r["命中"]?'#2e7d4f':'#c0392b'}">${r["命中"]?"✓":"✗"}</td>
+      </tr>`).join("");
+    // 非向量模式：这几种模式各自最有信息量的数字不一样，第三/第四张卡跟着换
+    const thirdBox = isRerank
+      ? `<div class="box"><div class="v">${d["否定类拒答正确"]}/${d["否定类总数"]}</div><div class="k">否定类拒答</div></div>`
+      : isRrf
+      ? `<div class="box"><div class="v">${esc(d["两路重叠块数均值"])}</div><div class="k">两路重叠块数均值</div></div>`
+      : `<div class="box"><div class="v">${d["否定类零命中"]}/${d["否定类总数"]}</div><div class="k">否定类零命中</div></div>`;
+    const fourthBox = isRerank
+      ? `<div class="box"><div class="v">${d["重排改写top1题数"]}</div><div class="k">重排改写 top1</div></div>`
+      : `<div class="box"><div class="v">${d["正例数"]}</div><div class="k">正例数</div></div>`;
+    const kpi = isVec
+      ? `<div class="kpi">
+          <div class="box"><div class="v">${esc(d["top3命中率"])}</div><div class="k">Top-3 命中率</div></div>
+          <div class="box"><div class="v">${esc(d["top1命中率"])}</div><div class="k">Top-1 命中率</div></div>
+          <div class="box"><div class="v">${d["否定类拒答正确"]}/${d["否定类总数"]}</div><div class="k">否定类拒答</div></div>
+          <div class="box"><div class="v">${esc(d["正例top1分数均值"])}</div><div class="k">正例 top1 均分</div></div>
+        </div>`
+      : `<div class="kpi">
+          <div class="box"><div class="v">${esc(d["top3命中率"])}</div><div class="k">Top-3 命中率</div></div>
+          <div class="box"><div class="v">${esc(d["top1命中率"])}</div><div class="k">Top-1 命中率</div></div>
+          ${thirdBox}
+          ${fourthBox}
+        </div>`;
+    const scoreLabel = isVec ? "向量分" : isRrf ? "融合分" : isRerank ? "重排分" : "BM25 分";
+    $("#r3").innerHTML = `
+      ${kpi}
+      <div class="card"><table>
+        <thead><tr><th>问题</th><th>类型</th><th>期望出处</th><th>${scoreLabel}</th><th>Top-3 实际捞到</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="hint">${isVec ? "否定类 top1 均分：" + esc(d["否定类top1分数均值"]) : esc(d["说明"])}${d["拒答阈值"] ? "（拒答阈值 " + esc(d["拒答阈值"]) + "）" : ""}　共 ${d["总数"]} 题</div>
+      </div>`;
+  } catch(e) { $("#r3").innerHTML = `<div class="card msg err">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; }
+};
+
+// 出题
+const dl = $("#srclist");
+SOURCES.forEach(s => { const o = document.createElement("option"); o.value = s; dl.appendChild(o); });
+$("#b4").onclick = async () => {
+  const body = {question: $("#fq").value, expect: $("#fe").value, type: $("#ft").value};
+  $("#fmsg").textContent = "";
+  try {
+    const r = await fetch("/eval/add", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const d = await r.json();
+    $("#fmsg").innerHTML = `<span style="color:${d.ok?'#2e7d4f':'#c0392b'}">${esc(d.msg)}</span>`;
+    if (d.ok) { $("#fq").value = ""; $("#fe").value = ""; }
+  } catch(e) { $("#fmsg").innerHTML = `<span style="color:#c0392b">${esc(e.message)}</span>`; }
+};
+</script>
+</body>
+</html>

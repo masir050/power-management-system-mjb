@@ -25,6 +25,7 @@
         <module>power-device</module>
         <module>power-billing</module>
         <module>power-alert</module>
+        <module>power-rag</module>
     </modules>
 
     <properties>
@@ -37,6 +38,9 @@
         <!-- 3.40.2 起 starter 才携带 redisson-spring-data-34（匹配 Spring Data Redis 3.4 / Boot 3.3） -->
         <redisson.version>3.40.2</redisson.version>
         <springdoc.version>2.6.0</springdoc.version>
+        <!-- Spring AI 1.0.0：其传递依赖是 Spring Framework 6.2.x / Boot 3.4.5，能被 Boot 3.3.5 的 BOM 管住。
+             1.0.1 起改为依赖 Boot 3.5.0，会和本项目的 Boot 3.3.5 打架，不要再往上加。 -->
+        <spring-ai.version>1.0.0</spring-ai.version>
     </properties>
 
     <dependencyManagement>
@@ -52,6 +56,13 @@
                 <groupId>com.alibaba.cloud</groupId>
                 <artifactId>spring-cloud-alibaba-dependencies</artifactId>
                 <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

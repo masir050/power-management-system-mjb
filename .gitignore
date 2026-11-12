@@ -37,3 +37,11 @@ frontend/dist/
 # 调试图标
 /.shots/
 /.shots-role/
+
+# 本机真实凭据（不入库）
+power-rag/src/main/resources/application-local.yml
+
+# 本机临时杂记与语料扩充脚本
+/cp.txt
+data/_*
+data/docs/_写什么.txt

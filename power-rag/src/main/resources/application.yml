@@ -1,0 +1,52 @@
+server:
+  port: 8088
+
+spring:
+  # 真实 key / 口令在被 gitignore 的 application-local.yml 里，找不到也能起（走环境变量或默认空）
+  config:
+    import: optional:application-local.yml
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: postgres
+  ai:
+    openai:
+      # 顶层是所有 openai 能力共用的默认值（speech/image 等只读这里，不能删）
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY:}
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.0
+      # DeepSeek 没有 /embeddings 接口，向量走硅基流动；key 与顶层不是同一把
+      embedding:
+        base-url: https://api.siliconflow.cn
+        api-key: ${SILICONFLOW_API_KEY:}
+        options:
+          model: BAAI/bge-m3
+    vectorstore:
+      pgvector:
+        initialize-schema: true   # 自动建 vector_store 表
+        dimensions: 1024          # bge-m3 输出 1024 维，写 1536 会建表失败
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+
+    # 工具调用轮次上限，超过就停止并让模型基于已有信息作答
+    chat:
+      client:
+        max-tool-calls: 6
+
+# Neo4j：必须写在根部（0 缩进），GraphTools 读的是裸 key ${neo4j.uri}，不是 spring.neo4j.uri
+neo4j:
+  uri: bolt://localhost:7687
+  username: neo4j
+  password: grid12345
+
+# 设备台账在 MySQL 的 power_device 库，和上面 pgvector 用的 PostgreSQL 不是同一个库
+power:
+  rag:
+    device-db:
+      url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/power_device?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      username: ${MYSQL_USER:root}
+      # 本机口令放 application-local.yml（不入库），也可用环境变量 MYSQL_PASSWORD
+      password: ${MYSQL_PASSWORD:}
