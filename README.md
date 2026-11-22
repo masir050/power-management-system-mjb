@@ -4,6 +4,18 @@
 
 技术栈：Java 21 · Spring Boot 3.3.5 · Spring Cloud 2023.0.3 · Spring Cloud Alibaba 2023.0.3.2 · MyBatis · MySQL 8 · Redis（Redisson）· RabbitMQ · Nacos · Sentinel · Spring AI 1.0.0 · pgvector · Neo4j 5 · Vue 3 + Element Plus + Vite 5。
 
+## 运行截图
+
+以下均为本机真实运行截图（按第 3 节启动后截取）：
+
+![登录页](docs/demo-login.png)
+
+![运行总览：KPI、日用电趋势、设备风险分布、最近检修记录](docs/demo-dashboard.png)
+
+![电力设备台账：四级台账、搜索筛选、分页](docs/demo-equipment.png)
+
+![电力规程助手：RAG 问答、回答带出处、工具调用轨迹可展开](docs/demo-rag.png)
+
 ## 1 模块结构
 
 | 模块 | 端口 | 职责 | 数据库 |
